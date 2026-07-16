@@ -44,19 +44,19 @@ namespace Deathlink.Death
                     sb.AppendLine();
                 }
 
-                if (deathlinkPlayerSettings.SkillModifiers.Count > 0) {
+                if (deathlinkPlayerSettings.SkillModifiers != null && deathlinkPlayerSettings.SkillModifiers.Count > 0) {
                     sb.AppendLine($"<size=30><b>Skill Modifiers</b></size>");
                     sb.AppendLine(deathlinkPlayerSettings.GetSkillModiferDescription());
                     sb.AppendLine();
                 }
 
-                if (deathlinkPlayerSettings.ResourceModifiers.Count > 0) {
+                if (deathlinkPlayerSettings.ResourceModifiers != null && deathlinkPlayerSettings.ResourceModifiers.Count > 0) {
                     sb.AppendLine($"<size=30><b>Resource Modifiers</b></size>");
                     sb.AppendLine(deathlinkPlayerSettings.GetResourceModiferDescription());
                     sb.AppendLine();
                 }
 
-                if (deathlinkPlayerSettings.DeathLootModifiers.Count > 0) {
+                if (deathlinkPlayerSettings.DeathLootModifiers != null && deathlinkPlayerSettings.DeathLootModifiers.Count > 0) {
                     sb.AppendLine($"<size=30><b>Loot Modifiers</b></size>");
                     sb.AppendLine(deathlinkPlayerSettings.GetLootModifiersDescription());
                     sb.AppendLine();

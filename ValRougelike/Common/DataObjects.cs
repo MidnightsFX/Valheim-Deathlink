@@ -81,11 +81,14 @@ public class DataObjects
         public int maxItemsKept;
         public int minEquipmentKept;
         public int maxEquipmentKept;
+        public int minItemsKeptChoices;
+        public int maxItemsKeptChoices;
         public bool skillLossOnDeath = true;
         public float maxSkillLossPercentage;
         public float minSkillLossPercentage;
         public ItemLossStyle itemLossStyle;
         public ItemSavedStyle itemSavedStyle;
+        public bool EnableItemSavingChoices = true;
         public NonSkillCheckedItemAction nonSkillCheckedItemAction = NonSkillCheckedItemAction.Tombstone;
     }
 
@@ -94,7 +97,7 @@ public class DataObjects
         public bool skillInfluence { get; set; } = true;
         public List<string> prefabs { get; set; }
         public float bonusModifer { get; set; }
-        public List<ResourceGainTypes> bonusActions { get; set; }
+        public List<ResourceGainTypes> bonusActions { get; set; } = new List<ResourceGainTypes>();
     }
 
     public class DeathSkillModifier
@@ -110,13 +113,13 @@ public class DataObjects
         public string prefab { get; set; }
         public float chance { get; set; }
         public int amount { get; set; } = 1;
-        public List<ResourceGainTypes> bonusActions { get; set; }
+        public List<ResourceGainTypes> bonusActions { get; set; } = new List<ResourceGainTypes>();
     }
 
     public class DeathChoiceLevel
     {
         public string DisplayName { get; set; }
-        public DeathProgressionDetails DeathStyle { get; set; }
+        public DeathProgressionDetails DeathStyle { get; set; } = new DeathProgressionDetails();
         public float DeathSkillRate { get; set; } = 1f;
         public float DamageTakenModifier { get; set; } = 1f;
         public float DamageDoneModifier { get; set; } = 1f;
@@ -137,6 +140,10 @@ public class DataObjects
                 if (DeathLootModifiers != null && DeathLootModifiers.Count > 0) {
                     foreach (var kvp in DeathLootModifiers) {
                         if (kvp.Value.bonusActions.Contains(ResourceGainTypes.Kills)) {
+                            if (string.IsNullOrEmpty(kvp.Value.prefab)) {
+                                Logger.LogWarning($"Kill loot modifier '{kvp.Key}' has no prefab set, it will be skipped.");
+                                continue;
+                            }
                             GameObject lootGO = PrefabManager.Instance.GetPrefab(kvp.Value.prefab);
                             if (lootGO == null) {
                                 Logger.LogWarning($"Could not find prefab {kvp.Value.prefab} while building kill loot table, it will be skipped.");
@@ -164,6 +171,10 @@ public class DataObjects
                 if (DeathLootModifiers != null && DeathLootModifiers.Count > 0) {
                     foreach (var kvp in DeathLootModifiers) {
                         if (kvp.Value.bonusActions.Contains(ResourceGainTypes.Harvesting)) {
+                            if (string.IsNullOrEmpty(kvp.Value.prefab)) {
+                                Logger.LogWarning($"Harvest loot modifier '{kvp.Key}' has no prefab set, it will be skipped.");
+                                continue;
+                            }
                             GameObject lootGO = PrefabManager.Instance.GetPrefab(kvp.Value.prefab);
                             if (lootGO == null) {
                                 Logger.LogWarning($"Could not find prefab {kvp.Value.prefab} while building harvest loot table, it will be skipped.");
@@ -226,6 +237,7 @@ public class DataObjects
 
         public string GetLootModifiersDescription() {
             StringBuilder sb = new StringBuilder();
+            if (DeathLootModifiers == null) { return sb.ToString(); }
             foreach (var entry in DeathLootModifiers) {
                 sb.AppendLine(Localization.instance.Localize($"<color={color_good}>{entry.Value.chance*100}%</color> $loot_desc_pt1 {entry.Key} $loot_desc_pt2 {string.Join(",", entry.Value.bonusActions)}"));
             }
@@ -234,6 +246,7 @@ public class DataObjects
 
         public string GetSkillModiferDescription() {
             StringBuilder sb = new StringBuilder();
+            if (SkillModifiers == null) { return sb.ToString(); }
             foreach (var entry in SkillModifiers) {
                 if (entry.Value.bonusModifer > 1f) {
                     sb.AppendLine(Localization.instance.Localize($"{entry.Key} +<color={color_good}>{Mathf.Round((entry.Value.bonusModifer - 1f)*100)}%</color> $xp"));
@@ -246,11 +259,12 @@ public class DataObjects
 
         public string GetResourceModiferDescription() {
             StringBuilder sb = new StringBuilder();
+            if (ResourceModifiers == null) { return sb.ToString(); }
             foreach (var entry in ResourceModifiers) {
                 if (entry.Value.bonusModifer > 1f) {
                     sb.AppendLine(Localization.instance.Localize($"{entry.Key} $drops <color={color_good}>{(entry.Value.bonusModifer - 1) * 100}%</color> $more {string.Join(",", entry.Value.bonusActions)}"));
                 } else {
-                    sb.AppendLine(Localization.instance.Localize($"{entry.Key} $drops <color={color_bad}{(1 - entry.Value.bonusModifer) * 100}%</color> $less {string.Join(",", entry.Value.bonusActions)}"));
+                    sb.AppendLine(Localization.instance.Localize($"{entry.Key} $drops <color={color_bad}>{(1 - entry.Value.bonusModifer) * 100}%</color> $less {string.Join(",", entry.Value.bonusActions)}"));
                 }
             }
 

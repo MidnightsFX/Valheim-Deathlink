@@ -78,6 +78,7 @@
     <Compile Include="Death\DamageModifiers.cs" />
     <Compile Include="Death\DeathChoices.cs" />
     <Compile Include="Death\DeathProgressionSkill.cs" />
+    <Compile Include="Death\DeathSavingOptions.cs" />
     <Compile Include="Death\HarvestModifiers.cs" />
     <Compile Include="Death\LeaderboardData.cs" />
     <Compile Include="Death\LeaderboardUI.cs" />

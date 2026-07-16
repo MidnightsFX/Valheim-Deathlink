@@ -82,10 +82,17 @@ namespace Deathlink.Death
         // Server side: a client reported its single-entry snapshot.
         private static IEnumerator OnServerReceiveSnapshot(long sender, ZPackage package)
         {
-            string yaml = package.ReadString();
             try {
+                bool wantsBoard = package.ReadBool();
+                string yaml = package.ReadString();
                 var entry = yamldeserializer.Deserialize<LeaderboardEntry>(yaml);
                 MergeSnapshot(entry);
+                // Reply to just this client when it asked (a dashboard opened and pulled the board);
+                // routine periodic reports don't, so we don't spam the whole server on every tick.
+                // Passive distribution to all players still happens on the SyncLoop broadcast.
+                if (wantsBoard && leaderboardRPC != null) {
+                    leaderboardRPC.SendPackage(sender, SendFullBoardPackage());
+                }
             } catch (Exception e) {
                 Logger.LogWarning($"Failed to parse leaderboard snapshot from {sender}. Exception: {e}");
             }
@@ -118,19 +125,74 @@ namespace Deathlink.Death
             leaderboardRPC.SendPackage(ZNet.instance.m_peers, SendFullBoardPackage());
         }
 
-        public static void SendLocalSnapshotToServer()
+        // requestBoard is set when a client opens the dashboard: it asks the server to reply with the
+        // current board to just this client (an on-demand pull), on top of merging the pushed snapshot.
+        public static void SendLocalSnapshotToServer(bool requestBoard = false)
         {
             LeaderboardEntry snap = BuildLocalSnapshot();
             if (snap == null) { return; }
             // On a listen-server host we are the server: merge directly instead of sending to ourselves.
             if (ZNet.instance != null && ZNet.instance.IsServer()) {
                 MergeSnapshot(snap);
+                // The host reads the authoritative board directly, so a pull is just a local refresh.
+                if (requestBoard) { LeaderboardUI.RefreshIfVisible(); }
                 return;
             }
             if (leaderboardRPC == null || ZRoutedRpc.instance == null) { return; }
             ZPackage pkg = new ZPackage();
+            pkg.Write(requestBoard);
             pkg.Write(yamlserializer.Serialize(snap));
             leaderboardRPC.SendPackage(ZRoutedRpc.instance.GetServerPeerID(), pkg);
+        }
+
+        // Called when a client opens the leaderboard dashboard: push our latest stats and pull the
+        // current board so recent accomplishments are reflected immediately. The server replies to
+        // just this client; passive distribution to everyone else still rides the background SyncLoop.
+        public static void RequestDashboardSync()
+        {
+            if (!ValConfig.EnableLeaderboard.Value || ZNet.instance == null) { return; }
+            try {
+                SendLocalSnapshotToServer(requestBoard: true);
+            } catch (Exception e) {
+                Logger.LogWarning($"Leaderboard dashboard sync failed: {e}");
+            }
+        }
+
+        // Push a final snapshot to the server as part of the disconnect/shutdown sequence.
+        // This cannot use SendLocalSnapshotToServer: Jotunn's SendPackage runs as a coroutine hosted
+        // on ZNet.instance, and during shutdown that coroutine never gets another frame before ZNet
+        // tears the connection down, so the packet would never actually be transmitted. Instead we
+        // drive the send routine synchronously here, while the server socket is still open, so
+        // InvokeRoutedRPC queues the packet before ZNet.Shutdown disposes the peers.
+        public static void FlushLocalSnapshotToServer()
+        {
+            if (ZNet.instance == null) { return; }
+
+            // On a listen-server host (and, defensively, a dedicated server with no local player)
+            // there is no remote server to push to; merge our own snapshot directly if we have one.
+            if (ZNet.instance.IsServer()) {
+                if (Player.m_localPlayer != null) {
+                    LeaderboardEntry hostSnap = BuildLocalSnapshot();
+                    if (hostSnap != null) { MergeSnapshot(hostSnap); }
+                }
+                return;
+            }
+
+            if (Player.m_localPlayer == null || leaderboardRPC == null) { return; }
+            ZNetPeer serverPeer = ZNet.instance.GetServerPeer();
+            if (serverPeer == null) { return; }
+
+            LeaderboardEntry snap = BuildLocalSnapshot();
+            if (snap == null) { return; }
+
+            ZPackage pkg = new ZPackage();
+            pkg.Write(false); // disconnecting: no board reply needed (matches OnServerReceiveSnapshot's read order)
+            pkg.Write(yamlserializer.Serialize(snap));
+
+            // A small, uncompressed package completes the send routine in a single synchronous pass,
+            // performing the underlying InvokeRoutedRPC before we return.
+            IEnumerator routine = leaderboardRPC.SendPackageRoutine(new List<ZNetPeer> { serverPeer }, pkg);
+            while (routine.MoveNext()) { }
         }
 
         // ---------------------------------------------------------------------
@@ -259,6 +321,31 @@ namespace Deathlink.Death
                 } catch (Exception e) {
                     Logger.LogWarning($"Initial leaderboard report failed: {e}");
                 }
+            }
+        }
+
+        // Flush a final snapshot to the server when the player disconnects, so a session that ended
+        // before the slow SyncLoop tick (or an entire short session) is not lost. Game.Shutdown is the
+        // shared choke point for both "log out to main menu" and "quit to desktop", and it runs before
+        // ZNet tears down the connection, so the server socket is still open to send over.
+        [HarmonyPatch(typeof(Game), "Shutdown")]
+        public static class Leaderboard_Shutdown_Patch
+        {
+            [HarmonyPrefix]
+            public static void Prefix()
+            {
+                if (ValConfig.EnableLeaderboard.Value) {
+                    try {
+                        FlushLocalSnapshotToServer();
+                    } catch (Exception e) {
+                        Logger.LogWarning($"Leaderboard disconnect flush failed: {e}");
+                    }
+                }
+                // Let the one-shot spawn report fire again if the player reconnects (to a dedicated
+                // server, say) without restarting the game; these statics otherwise persist for the
+                // whole process and would leave a reconnected player's board stale until the next tick.
+                initialReportSent = false;
+                sessionDamage = 0;
             }
         }
 

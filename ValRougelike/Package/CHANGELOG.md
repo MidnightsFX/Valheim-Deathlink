@@ -1,3 +1,22 @@
+  **0.10.0**
+---
+```
+- Improves responsive tracking of leadership board data
+- Ensures player data is synced to the server before disconnects
+- Adds a death choice option, which scales with deathlink level
+	- Death choice allows selecting which items are saved (or a portion of items saved)
+	- Only applies for deathlink progression based deaths (not hardcore or vanilla)
+	- New configurations added for the default deathlink profiles
+```
+
+  **0.9.3**
+---
+```
+- Improves resiliance of a number of configurations which if unset could result in unexpected behavior
+- Moves the deathlink leadership board to the deathlink tab, defaults it to hidden
+- Fixes an issue where the deathlink selection would select the wrong entry, if configuration was broken
+```
+
   **0.9.2**
 ---
 ```

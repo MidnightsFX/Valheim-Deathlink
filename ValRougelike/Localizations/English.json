@@ -55,5 +55,11 @@
   "lb_bosses": "Bosses",
   "lb_trees": "Trees",
   "lb_mining": "Mining",
-  "lb_crafts": "Crafts & Builds"
+  "lb_crafts": "Crafts & Builds",
+  "dso_header": "Rescue Your Belongings",
+  "dso_description": "Choose which items to carry back from your death. Any unused space is filled at random.",
+  "dso_confirm": "Confirm Selection",
+  "dso_selected": "Selected {0} / {1}",
+  "dso_random_note": "{0} more will be randomly saved",
+  "dso_spawn_message": "You died. Open your inventory to choose which items to rescue."
 }

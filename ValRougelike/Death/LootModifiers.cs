@@ -45,7 +45,10 @@ namespace Deathlink.Death
                     }
                 }
 
-                __result = modified;
+                // Harmony only writes __result back when it is declared 'ref'; a plain reassignment
+                // is discarded. Mutate the existing list in place so the scaled drops actually apply.
+                __result.Clear();
+                __result.AddRange(modified);
             }
         }
     }

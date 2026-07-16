@@ -126,6 +126,26 @@ public static class OnDeathChanges
                     }
                     break;
                 case DataObjects.ItemLossStyle.DeathlinkBased:
+                    float deathskill = DeathProgressionSkill.DeathSkillCalculatePercentWithBonus();
+                    int totalKept = CalculateItemsSavable(deathskill);
+                    int choiceCount = Mathf.Clamp(CalculateItemChoiceCount(deathskill), 0, totalKept);
+                    // Player-driven item saving: defer the save/loss decision to a respawn UI when it
+                    // is enabled and there is actually a choice to make (the player has picks and some
+                    // items would otherwise be lost).
+                    if (Deathlink.pcfg().DeathStyle.EnableItemSavingChoices
+                        && choiceCount > 0
+                        && playerItemsWithoutNonSkillCheckedItems.Count > totalKept) {
+                        Logger.LogDebug($"Deferring item saving to respawn choice. keep {totalKept}, pick {choiceCount}, pool {playerItemsWithoutNonSkillCheckedItems.Count}");
+                        // Remove every candidate now so the reduced inventory is what gets saved for
+                        // respawn; the chosen items are re-added once the player picks them.
+                        foreach (var item in playerItemsWithoutNonSkillCheckedItems) {
+                            instance.m_inventory.RemoveItem(item);
+                        }
+                        DeathSavingOptions.CaptureDeathChoice(playerItemsWithoutNonSkillCheckedItems, totalKept, choiceCount);
+                        // Skill-checked items are handled on respawn, so nothing is added to
+                        // itemResults for them here.
+                        break;
+                    }
                     Logger.LogDebug("Destroying random items based on deathlink skill");
                     itemResults = DetermineItemResultsByDeathlink(instance, playerItemsWithoutNonSkillCheckedItems);
                     itemResults[ItemResults.EquipmentLost].ForEach(item => instance.m_inventory.RemoveItem(item));
@@ -192,10 +212,39 @@ public static class OnDeathChanges
             tombstone.Changed();
         }
 
+        /// <summary>
+        /// Skill-scaled count of non-equipment items kept on a DeathlinkBased death.
+        /// </summary>
+        internal static int CalculateItemsToKeep(float deathskillbonus) {
+            return Mathf.RoundToInt(((Deathlink.pcfg().DeathStyle.maxItemsKept - Deathlink.pcfg().DeathStyle.minItemsKept) * deathskillbonus) + Deathlink.pcfg().DeathStyle.minItemsKept);
+        }
+
+        /// <summary>
+        /// Skill-scaled count of equipment items kept on a DeathlinkBased death.
+        /// </summary>
+        internal static int CalculateEquipmentSavable(float deathskillbonus) {
+            return Mathf.RoundToInt(((Deathlink.pcfg().DeathStyle.maxEquipmentKept - Deathlink.pcfg().DeathStyle.minEquipmentKept) * deathskillbonus) + Deathlink.pcfg().DeathStyle.minEquipmentKept);
+        }
+
+        /// <summary>
+        /// Total items saved on a DeathlinkBased death (equipment + non-equipment budget). Shared by
+        /// the random-save path and the player-choice path so both agree on the keep budget.
+        /// </summary>
+        internal static int CalculateItemsSavable(float deathskillbonus) {
+            return CalculateItemsToKeep(deathskillbonus) + CalculateEquipmentSavable(deathskillbonus);
+        }
+
+        /// <summary>
+        /// Skill-scaled number of items the player may hand-pick in the death saving choice UI.
+        /// </summary>
+        internal static int CalculateItemChoiceCount(float deathskillbonus) {
+            return Mathf.RoundToInt(((Deathlink.pcfg().DeathStyle.maxItemsKeptChoices - Deathlink.pcfg().DeathStyle.minItemsKeptChoices) * deathskillbonus) + Deathlink.pcfg().DeathStyle.minItemsKeptChoices);
+        }
+
         internal static Dictionary<ItemResults, List<ItemDrop.ItemData>> DetermineItemResultsByDeathlink(Player player, List<ItemDrop.ItemData> playerItemsWithoutNonSkillCheckedItems) {
             float deathskillbonus = DeathProgressionSkill.DeathSkillCalculatePercentWithBonus();
-            int items_to_keep = Mathf.RoundToInt(((Deathlink.pcfg().DeathStyle.maxItemsKept - Deathlink.pcfg().DeathStyle.minItemsKept) * deathskillbonus) + Deathlink.pcfg().DeathStyle.minItemsKept);
-            int max_equipment_savable = Mathf.RoundToInt(((Deathlink.pcfg().DeathStyle.maxEquipmentKept - Deathlink.pcfg().DeathStyle.minEquipmentKept) * deathskillbonus) + Deathlink.pcfg().DeathStyle.minEquipmentKept);
+            int items_to_keep = CalculateItemsToKeep(deathskillbonus);
+            int max_equipment_savable = CalculateEquipmentSavable(deathskillbonus);
             int numberOfItemsSavable = items_to_keep + max_equipment_savable;
 
             Dictionary<ItemResults, List<ItemDrop.ItemData>> itemResults = new Dictionary<ItemResults, List<ItemDrop.ItemData>>(){

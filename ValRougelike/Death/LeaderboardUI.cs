@@ -49,7 +49,10 @@ namespace Deathlink.Death
         {
             if (!EnsurePanel()) { return; }
             panel.SetActive(true);
+            // Show the currently cached board right away, then push our latest stats and pull the
+            // server's current state; the reply triggers RefreshIfVisible to repopulate with fresh data.
             PopulateView(currentView);
+            LeaderboardData.RequestDashboardSync();
         }
 
         public static void Hide()
@@ -269,33 +272,51 @@ namespace Deathlink.Death
         // Trophies/Compendium (TextsDialog) integration
         // -----------------------------------------------------------------
 
-        private static string LeaderboardTopic => Localization.instance.Localize("$leaderboard");
+        private static GameObject leaderboardButton;
+        private static string DeathlinkSettingsTopic => Localization.instance.Localize("$deathlink_settings");
 
-        // Add a "Leaderboard" page to the Trophies/Compendium list.
-        [HarmonyPatch(typeof(TextsDialog), nameof(TextsDialog.UpdateTextsList))]
-        public static class TextsDialog_AddLeaderboardPage_Patch
-        {
-            public static void Postfix(TextsDialog __instance)
-            {
-                if (!ValConfig.EnableLeaderboard.Value) { return; }
-                __instance.m_texts.Insert(0, new TextsDialog.TextInfo(
-                    LeaderboardTopic,
-                    Localization.instance.Localize("$leaderboard_page_hint")));
-            }
-        }
-
-        // Show our overlay while the Leaderboard page is selected; hide it on any other page.
+        // Show a "Leaderboard" button on the Deathlink settings page, to the left of the close box
+        // (mirroring the "Change Death Choice" button that sits on the right). The overlay opens only
+        // when this button is clicked, never automatically, so there is no separate leaderboard page
+        // in the compendium list any more.
         [HarmonyPatch(typeof(TextsDialog), nameof(TextsDialog.ShowText), new Type[] { typeof(TextsDialog.TextInfo) })]
         public static class TextsDialog_ShowText_Leaderboard_Patch
         {
-            public static void Postfix(TextsDialog.TextInfo text)
+            public static void Postfix(TextsDialog __instance, TextsDialog.TextInfo text)
             {
-                if (!ValConfig.EnableLeaderboard.Value) { Hide(); return; }
-                if (text != null && text.m_topic == LeaderboardTopic) {
-                    Show();
-                } else {
-                    Hide();
+                bool onSettingsPage = text != null && text.m_topic == DeathlinkSettingsTopic;
+                if (!ValConfig.EnableLeaderboard.Value || !onSettingsPage) {
+                    if (leaderboardButton != null) { leaderboardButton.SetActive(false); }
+                    return;
                 }
+
+                EnsureLeaderboardButton(__instance);
+                if (leaderboardButton != null) {
+                    leaderboardButton.SetActive(true);
+                    leaderboardButton.transform.SetAsLastSibling();
+                }
+            }
+
+            private static void EnsureLeaderboardButton(TextsDialog dialog)
+            {
+                if (leaderboardButton != null) { return; }
+                if (GUIManager.Instance == null) {
+                    Logger.LogWarning("GUIManager not setup, skipping leaderboard button creation.");
+                    return;
+                }
+
+                Transform closebuttonTF = dialog.transform.Find("Texts_frame/Closebutton");
+                if (closebuttonTF == null) { return; }
+
+                leaderboardButton = GUIManager.Instance.CreateButton(
+                    text: Localization.instance.Localize("$leaderboard"),
+                    parent: closebuttonTF,
+                    anchorMin: new Vector2(0.5f, 0.5f),
+                    anchorMax: new Vector2(0.5f, 0.5f),
+                    position: new Vector2(-250f, 0f),
+                    width: 200f,
+                    height: 40f);
+                leaderboardButton.GetComponent<Button>().onClick.AddListener(Show);
             }
         }
 

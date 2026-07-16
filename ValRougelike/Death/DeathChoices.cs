@@ -20,7 +20,10 @@ namespace Deathlink.Death
                     if (Player.m_localPlayer != null && DeathConfigurationData.playerSettings.ContainsKey(Player.m_localPlayer.GetPlayerID())) { return; }
                 }
                 
-                if (__instance.gameObject.GetComponent<DeathChoiceUI>() == null) { __instance.gameObject.AddComponent<DeathChoiceUI>(); }
+                // Route through the persistent singleton holder only. Attaching the component to the
+                // InventoryGui GameObject (which is torn down and recreated on world reload) produced a
+                // second DeathChoiceUI instance and a second ToggleGroup over the same static state,
+                // which is what desynced the highlighted choice from the saved one.
                 DeathChoiceUI.Instance.Show();
             }
         }
@@ -134,6 +137,13 @@ namespace Deathlink.Death
             // TODO make this configurable and loaded from a config file
             private void SetChoiceList()
             {
+                // Destroy any rows from a previous build before repopulating. Clearing only the
+                // tracking list (below) used to leave the old toggle GameObjects parented under the
+                // content, so a rebuild stacked duplicate toggles into the shared ToggleGroup and the
+                // saved choice could come from a different toggle than the one shown selected.
+                foreach (Transform child in ChoicesContent.transform) {
+                    GameObject.Destroy(child.gameObject);
+                }
                 difficultyToggles.Clear();
                 int y_value = -75;
                 //Logger.LogDebug($"Setting up {DeathChoices.Count} death styles.");
@@ -149,6 +159,10 @@ namespace Deathlink.Death
                     var toggle = selector.GetComponent<Toggle>();
                     toggle.group = choiceGroup;
                     toggle.onValueChanged.AddListener((isOn) => {
+                        // Only react to the toggle being switched ON. The group also fires this
+                        // callback with isOn=false on the previously-selected toggle when it is
+                        // switched off, which would otherwise overwrite the descriptions/selection.
+                        if (!isOn) { return; }
                         //Logger.LogDebug("Setting up onclock");
                         DeathPenaltyDescription.GetComponent<Text>().text = entry.Value.GetDeathStyleDescription();
                         //Logger.LogDebug("Set death description");
@@ -172,6 +186,11 @@ namespace Deathlink.Death
 
             private void CreateStaticUIObjects()
             {
+                // Idempotent: never build a second panel/ToggleGroup over the shared static state.
+                // Unity's fake-null makes this correctly rebuild after a real teardown (e.g. world
+                // reload destroys the panel, so DeathChoicePanel == null again) while blocking a
+                // duplicate build during a live session.
+                if (DeathChoicePanel != null) { return; }
                 if (GUIManager.Instance == null || !GUIManager.CustomGUIFront) {
                     Logger.LogWarning("GUIManager not setup, skipping static object creation.");
                     return;
