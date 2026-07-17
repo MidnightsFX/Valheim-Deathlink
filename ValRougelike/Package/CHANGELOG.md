@@ -1,3 +1,10 @@
+  **0.10.1**
+---
+```
+- Improves dedicated server parsing of leaderboard data
+- Imrpoves refresh of existing leaderboard data experiance
+```
+
   **0.10.0**
 ---
 ```

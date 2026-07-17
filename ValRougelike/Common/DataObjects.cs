@@ -15,6 +15,12 @@ public class DataObjects
     public static IDeserializer yamldeserializer = new DeserializerBuilder().WithNamingConvention(CamelCaseNamingConvention.Instance).Build();
     public static ISerializer yamlserializer = new SerializerBuilder().WithNamingConvention(CamelCaseNamingConvention.Instance).DisableAliases().ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitDefaults).Build();
 
+    // Leaderboard payloads travel over the network and are persisted to leaderboard.yaml, so they
+    // must tolerate keys the current type no longer maps (e.g. the computed averageLifeSeconds that
+    // older builds serialized). The strict yamldeserializer above is kept for hand-edited config
+    // files so admin typos there still surface as errors instead of being silently dropped.
+    public static IDeserializer leaderboardDeserializer = new DeserializerBuilder().WithNamingConvention(CamelCaseNamingConvention.Instance).IgnoreUnmatchedProperties().Build();
+
     public static readonly string DeathChoiceKey = "DL_DeathChoice";
     // Tracks how many times a player has changed their death choice. Distinct prefix from
     // DeathChoiceKey so PlayerHasUniqueKey's StartsWith check doesn't cross-match.
@@ -381,7 +387,10 @@ public class DataObjects
         public int Mines { get; set; }
         public int CraftsAndBuilds { get; set; }
 
-        // Average played time alive per completed life, in seconds.
+        // Average played time alive per completed life, in seconds. Computed from the fields above,
+        // so it is never serialized: the serializer would emit it, but it has no setter and would
+        // throw on deserialization. The UI recomputes it locally from the transmitted values.
+        [YamlIgnore]
         public float AverageLifeSeconds => DeathCount > 0 ? TotalLifeSeconds / DeathCount : 0f;
     }
 

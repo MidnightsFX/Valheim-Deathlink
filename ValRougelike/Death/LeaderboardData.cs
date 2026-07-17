@@ -58,7 +58,7 @@ namespace Deathlink.Death
         public static void UpdateLeaderboardFromYaml(string rawyaml)
         {
             if (string.IsNullOrWhiteSpace(rawyaml)) { return; }
-            var parsed = yamldeserializer.Deserialize<Dictionary<long, LeaderboardEntry>>(rawyaml);
+            var parsed = leaderboardDeserializer.Deserialize<Dictionary<long, LeaderboardEntry>>(rawyaml);
             if (parsed != null) { leaderboard = parsed; }
         }
 
@@ -85,7 +85,7 @@ namespace Deathlink.Death
             try {
                 bool wantsBoard = package.ReadBool();
                 string yaml = package.ReadString();
-                var entry = yamldeserializer.Deserialize<LeaderboardEntry>(yaml);
+                var entry = leaderboardDeserializer.Deserialize<LeaderboardEntry>(yaml);
                 MergeSnapshot(entry);
                 // Reply to just this client when it asked (a dashboard opened and pulled the board);
                 // routine periodic reports don't, so we don't spam the whole server on every tick.
