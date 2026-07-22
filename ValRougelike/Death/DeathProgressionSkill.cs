@@ -116,8 +116,11 @@ public static class DeathProgressionSkill
                 }
                 
                 // calculate the skill bonus for how long the player has been alive
-                float total_xp_from_actions = bosskillxp + killxp + buildxp + buildxp + treeharvestxp + mineharvestxp + craftupgradexp;
-                float skillbonus = ((float)Math.Log(__instance.m_timeSinceDeath) / 5) * 0.5f;
+                float total_xp_from_actions = bosskillxp + killxp + buildxp + treeharvestxp + mineharvestxp + craftupgradexp;
+                // Clamp to >= 0: Math.Log(m_timeSinceDeath) is negative in the first second after a
+                // respawn, which would otherwise feed a negative value into RaiseSkill and briefly
+                // reduce the death skill (and grant negative Almanac/WackyMMO XP).
+                float skillbonus = Mathf.Max(0f, ((float)Math.Log(__instance.m_timeSinceDeath) / 5) * 0.5f);
                 float curved_xp = (skillbonus * total_xp_from_actions);
 
                 if (Deathlink.RustyAlmanacClassesLoaded) {

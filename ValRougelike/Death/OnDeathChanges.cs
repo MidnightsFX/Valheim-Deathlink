@@ -320,8 +320,12 @@ public static class OnDeathChanges
 
         internal static bool RemoveEquipmentByStyle(int equipment_saved, int max_equipment_savable, ItemDrop.ItemData equipment, int numberOfItemsSavable, out int remainingsaves, out int equipment_saved_count)
         {
-            equipment_saved_count = 0;
-            remainingsaves = 0;
+            // Default the out params to the caller's *current* state, not zero. These are assigned
+            // straight back into the caller's numberOfItemsSavable/equipment_saved, so returning 0
+            // on a "don't save this piece" outcome would wipe the shared save budget and destroy
+            // every remaining (including non-equipment) item. Preserve the budget instead.
+            equipment_saved_count = equipment_saved;
+            remainingsaves = numberOfItemsSavable;
             if (numberOfItemsSavable <= 0) {
                 return false;
             }

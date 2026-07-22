@@ -1,3 +1,10 @@
+  **0.10.2**
+---
+```
+- Fixes skill gains not always applying
+- Fixes non-equipment saving not always giving the correct budget
+```
+
   **0.10.1**
 ---
 ```

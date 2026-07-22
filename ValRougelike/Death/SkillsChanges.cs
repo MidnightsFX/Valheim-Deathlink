@@ -67,7 +67,10 @@ public static class SkillsChanges
     [HarmonyPatch(typeof(Skills), nameof(Skills.RaiseSkill))]
     static class SkillRaisePatch
     {
-        private static void Prefix(Skills __instance, Skills.SkillType skillType, float factor) {
+        private static void Prefix(Skills __instance, Skills.SkillType skillType, ref float factor) {
+            // factor must be 'ref': Harmony only writes a value-type argument back to the original
+            // method when the prefix parameter is by-ref. Without it the modifier below was silently
+            // discarded and the death choice's SkillModifiers bonus never applied.
             float mod = Deathlink.pcfg().GetSkillBonusLazyCache(skillType);
             Logger.LogDebug($"{skillType} skillGain Modified {mod}");
             if (mod != 0f) {  factor *= mod; }
