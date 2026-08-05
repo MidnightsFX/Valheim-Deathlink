@@ -1,3 +1,9 @@
+  **0.10.3**
+---
+```
+- Updates required Jotunn version
+```
+
   **0.10.2**
 ---
 ```
