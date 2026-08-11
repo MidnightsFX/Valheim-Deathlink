@@ -1,6 +1,6 @@
 #!/bin/bash
 
-DLL=ValRougelike/bin/Debug/ValRougelike.dll
+DLL=Deathlink/bin/Debug/Deathlink.dll
 PLUGINS=/home/$USER/.local/share/Steam/steamapps/common/Valheim/BepInEx/plugins
 
 # Check that source files exist and are readable

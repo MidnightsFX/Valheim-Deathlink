@@ -1,15 +1,15 @@
 Rebuild started at 10:28 AM...
-1>------ Rebuild All started: Project: ValRougelike, Configuration: Release Any CPU ------
+1>------ Rebuild All started: Project: Deathlink, Configuration: Release Any CPU ------
 1>  Skipping Jotunn Prebuild Task
 1>  1 File(s) copied
-1>  ValRougelike -> C:\Users\carls\Documents\projects\Valheim_Stuff\valheim_rougelike\ValRougelike\bin\Release\Deathlink.dll
+1>  Deathlink -> C:\Users\carls\Documents\projects\Valheim_Stuff\valheim_rougelike\Deathlink\bin\Release\Deathlink.dll
 1>  Create mdb file for plugin Deathlink
-1>  Publishing for Release from C:\Users\carls\Documents\projects\Valheim_Stuff\valheim_rougelike\ValRougelike\bin\Release
+1>  Publishing for Release from C:\Users\carls\Documents\projects\Valheim_Stuff\valheim_rougelike\Deathlink\bin\Release
 1>  Packaging for ThunderStore...
-1>  C:\Users\carls\Documents\projects\Valheim_Stuff\valheim_rougelike\ValRougelike\Package\Deathlink.dll
+1>  C:\Users\carls\Documents\projects\Valheim_Stuff\valheim_rougelike\Deathlink\Package\Deathlink.dll
 1>  
 1>  
-1>      Directory: C:\Users\carls\Documents\projects\Valheim_Stuff\valheim_rougelike\ValRougelike\Package
+1>      Directory: C:\Users\carls\Documents\projects\Valheim_Stuff\valheim_rougelike\Deathlink\Package
 1>  
 1>  
 1>  Mode                 LastWriteTime         Length Name                                                                 
