@@ -1,25 +1,30 @@
-﻿using Jotunn.Managers;
+using Deathlink.Death;
+using Jotunn.Managers;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.IO;
 using System.Runtime.Serialization.Formatters.Binary;
 using System.Text;
 using UnityEngine;
 using YamlDotNet.Serialization;
-using YamlDotNet.Serialization.NamingConventions;
 
 namespace Deathlink.Common;
 
 public class DataObjects
 {
-    public static IDeserializer yamldeserializer = new DeserializerBuilder().WithNamingConvention(CamelCaseNamingConvention.Instance).Build();
-    public static ISerializer yamlserializer = new SerializerBuilder().WithNamingConvention(CamelCaseNamingConvention.Instance).DisableAliases().ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitDefaults).Build();
+    // Aliases onto the shared formats in Common/Config, so the call sites throughout this mod did not
+    // all have to change at once. The deserializer carries no naming convention and matches
+    // case-insensitively, so every file written by an older build -- which emitted camelCase -- still
+    // loads unchanged; only newly written files switch to PascalCase.
+    public static IDeserializer yamldeserializer = YamlFormat.Default.Deserializer;
+    public static ISerializer yamlserializer = YamlFormat.Default.Serializer;
 
     // Leaderboard payloads travel over the network and are persisted to leaderboard.yaml, so they
     // must tolerate keys the current type no longer maps (e.g. the computed averageLifeSeconds that
-    // older builds serialized). The strict yamldeserializer above is kept for hand-edited config
-    // files so admin typos there still surface as errors instead of being silently dropped.
-    public static IDeserializer leaderboardDeserializer = new DeserializerBuilder().WithNamingConvention(CamelCaseNamingConvention.Instance).IgnoreUnmatchedProperties().Build();
+    // older builds serialized). Hand-edited config files go through YamlConfigFile instead, which
+    // tries strict first so a typo is reported with its line number before falling back to this.
+    public static IDeserializer leaderboardDeserializer = YamlFormat.Default.TolerantDeserializer;
 
     public static readonly string DeathChoiceKey = "DL_DeathChoice";
     // Tracks how many times a player has changed their death choice. Distinct prefix from
@@ -79,9 +84,29 @@ public class DataObjects
     const string color_good = "#b9f2ff";
     const string color_bad = "#ff4040";
 
+    // The original misspelling of BonusModifier, kept as a read-only alias so every DeathChoices.yaml
+    // written before the rename still loads. The shim property returns null so OmitDefaults drops it on
+    // write: files are read under either spelling, but only ever written under the corrected one.
+    const string LegacyBonusModifier = "bonusModifer";
+
+    // Scales a multiplier towards "no effect" as the player's Deathlink skill falls, which is what
+    // skillInfluence has always claimed to do in the README. At full skill the configured bonus applies
+    // in full; at zero skill it collapses to 1.0 (no change). A bonus at or below 1 is left alone --
+    // there is nothing to scale, and a penalty should not get weaker with skill.
+    internal static float ScaleTowardsOne(float bonus, float deathSkillPercent) {
+        if (bonus <= 1f) { return bonus; }
+        return 1f + ((bonus - 1f) * Mathf.Clamp01(deathSkillPercent));
+    }
+
+    // Every member below whose initializer is not default(T) carries [DefaultValue] with that same
+    // value. Without it the serializer omits anything equal to default(T), so an admin writing
+    // `foodLossOnDeath: false` had it dropped on the next rewrite and the initializer put it straight
+    // back to true -- their "off" silently became "on". See Common/Config/YamlFormat.cs.
     public class DeathProgressionDetails
     {
+        [DefaultValue(true)]
         public bool foodLossOnDeath = true;
+        [DefaultValue(true)]
         public bool foodLossUsesDeathlink = true;
         public int minItemsKept;
         public int maxItemsKept;
@@ -89,35 +114,60 @@ public class DataObjects
         public int maxEquipmentKept;
         public int minItemsKeptChoices;
         public int maxItemsKeptChoices;
+        [DefaultValue(true)]
         public bool skillLossOnDeath = true;
         public float maxSkillLossPercentage;
         public float minSkillLossPercentage;
         public ItemLossStyle itemLossStyle;
         public ItemSavedStyle itemSavedStyle;
+        [DefaultValue(true)]
         public bool EnableItemSavingChoices = true;
+        [DefaultValue(NonSkillCheckedItemAction.Tombstone)]
         public NonSkillCheckedItemAction nonSkillCheckedItemAction = NonSkillCheckedItemAction.Tombstone;
     }
 
     public class DeathResourceModifier
     {
-        public bool skillInfluence { get; set; } = true;
+        // Opt-in. A bonus applies in full from the start unless this is turned on, which keeps the
+        // behaviour every existing config was actually getting while the flag was inert. Deliberately
+        // left on default(bool) with no [DefaultValue], so the serializer writes it out only when an
+        // admin has enabled it.
+        public bool skillInfluence { get; set; }
         public List<string> prefabs { get; set; }
-        public float bonusModifer { get; set; }
+        public float BonusModifier { get; set; }
+        [YamlMember(Alias = LegacyBonusModifier)]
+        public float? bonusModifer { get { return null; } set { if (value.HasValue) { BonusModifier = value.Value; ReadWithLegacySpelling = true; } } }
+
+        // Set when this entry was read under the old misspelling, which only a file written by 0.10.x or
+        // earlier can contain. That makes it a reliable "this file predates 0.11" marker, which the
+        // skillInfluence migration keys off. Internal, so YamlDotNet never sees it.
+        internal bool ReadWithLegacySpelling;
         public List<ResourceGainTypes> bonusActions { get; set; } = new List<ResourceGainTypes>();
     }
 
     public class DeathSkillModifier
     {
-        public bool skillInfluence { get; set; } = true;
+        // Opt-in. A bonus applies in full from the start unless this is turned on, which keeps the
+        // behaviour every existing config was actually getting while the flag was inert. Deliberately
+        // left on default(bool) with no [DefaultValue], so the serializer writes it out only when an
+        // admin has enabled it.
+        public bool skillInfluence { get; set; }
         public Skills.SkillType skill { get; set; }
-        public float bonusModifer { get; set; }
+        public float BonusModifier { get; set; }
+        [YamlMember(Alias = LegacyBonusModifier)]
+        public float? bonusModifer { get { return null; } set { if (value.HasValue) { BonusModifier = value.Value; ReadWithLegacySpelling = true; } } }
+
+        // Set when this entry was read under the old misspelling, which only a file written by 0.10.x or
+        // earlier can contain. That makes it a reliable "this file predates 0.11" marker, which the
+        // skillInfluence migration keys off. Internal, so YamlDotNet never sees it.
+        internal bool ReadWithLegacySpelling;
     }
 
     public class DeathLootModifier
     {
-        bool skillInfluence { get; set; } = true;
         public string prefab { get; set; }
         public float chance { get; set; }
+        [DefaultValue(1)]
         public int amount { get; set; } = 1;
         public List<ResourceGainTypes> bonusActions { get; set; } = new List<ResourceGainTypes>();
     }
@@ -126,15 +176,24 @@ public class DataObjects
     {
         public string DisplayName { get; set; }
         public DeathProgressionDetails DeathStyle { get; set; } = new DeathProgressionDetails();
+        // Marks the level a player falls back to when their stored choice no longer exists. Exactly one
+        // level should set it; without it the resolver has to guess from file order, which means simply
+        // reordering the file would change which level orphaned players land on.
+        public bool Fallback { get; set; }
+        [DefaultValue(1f)]
         public float DeathSkillRate { get; set; } = 1f;
+        [DefaultValue(1f)]
         public float DamageTakenModifier { get; set; } = 1f;
+        [DefaultValue(1f)]
         public float DamageDoneModifier { get; set; } = 1f;
         public Dictionary<string, DeathResourceModifier> ResourceModifiers { get; set; }
         public Dictionary<string, DeathSkillModifier> SkillModifiers { get; set; }
         public Dictionary<string, DeathLootModifier> DeathLootModifiers { get; set; }
 
-        private Dictionary<Skills.SkillType, float> CalculatedSkillMods = new Dictionary<Skills.SkillType, float>();
-        private Dictionary<string, float> CalculatedResourceMods = new Dictionary<string, float>();
+        // Skill-influenced and flat contributions are cached separately, because the influenced half
+        // depends on the player's current Deathlink skill and so cannot be baked into the cache.
+        private Dictionary<Skills.SkillType, Tuple<float, float>> CalculatedSkillMods = new Dictionary<Skills.SkillType, Tuple<float, float>>();
+        private Dictionary<string, Tuple<float, bool>> CalculatedResourceMods = new Dictionary<string, Tuple<float, bool>>();
         private bool CalculatedResourceModsCached = false;
         private Dictionary<GameObject, Tuple<float, int>> KillLootModifiers = new Dictionary<GameObject, Tuple<float, int>>();
         private bool CalculatedKillLootModifiersCached = false;
@@ -155,7 +214,9 @@ public class DataObjects
                                 Logger.LogWarning($"Could not find prefab {kvp.Value.prefab} while building kill loot table, it will be skipped.");
                                 continue;
                             }
-                            KillLootModifiers.Add(lootGO, new Tuple<float, int>(kvp.Value.chance, kvp.Value.amount));
+                            // Indexer, not Add: two entries naming the same prefab would throw, and the
+                            // cached flag is only set after this loop, so it would throw on every kill.
+                            KillLootModifiers[lootGO] = new Tuple<float, int>(kvp.Value.chance, kvp.Value.amount);
                         }
                     }
                 }
@@ -186,7 +247,8 @@ public class DataObjects
                                 Logger.LogWarning($"Could not find prefab {kvp.Value.prefab} while building harvest loot table, it will be skipped.");
                                 continue;
                             }
-                            ResourceLootModifiers.Add(lootGO, new Tuple<float, int>(kvp.Value.chance, kvp.Value.amount));
+                            // Indexer, not Add: see RollKillLoot above.
+                            ResourceLootModifiers[lootGO] = new Tuple<float, int>(kvp.Value.chance, kvp.Value.amount);
                         }
                     }
                 }
@@ -209,15 +271,23 @@ public class DataObjects
                         // Logger.LogDebug($"Checking resource modifiers {entry.Value.prefabs}");
                         if (entry.Value.prefabs != null) {
                             foreach (string pnam in entry.Value.prefabs) {
-                                Logger.LogDebug($"Building cache entry for {pnam} - {entry.Value.bonusModifer}");
-                                CalculatedResourceMods.Add(pnam, entry.Value.bonusModifer);
+                                Logger.LogDebug($"Building cache entry for {pnam} - {entry.Value.BonusModifier}");
+                                // Indexer, not Add: a prefab named by two entries of the same level would
+                                // throw here, and because the cached flag is only set after this loop it
+                                // would throw again on every single harvest, forever. First entry wins;
+                                // the config validator warns about the overlap at load time.
+                                CalculatedResourceMods[pnam] = new Tuple<float, bool>(entry.Value.BonusModifier, entry.Value.skillInfluence);
                             }
                         }
                     }
                 }
                 CalculatedResourceModsCached = true;
             }
-            if (CalculatedResourceMods.ContainsKey(prefab)) { return CalculatedResourceMods[prefab]; }
+            if (CalculatedResourceMods.TryGetValue(prefab, out Tuple<float, bool> mod)) {
+                return mod.Item2
+                    ? ScaleTowardsOne(mod.Item1, DeathProgressionSkill.DeathSkillCalculatePercentWithBonus())
+                    : mod.Item1;
+            }
             return 1f;
         }
 
@@ -226,19 +296,32 @@ public class DataObjects
             return GetResouceEarlyCache(prefab.name);
         }
 
+        // Returns the multiplier applied to XP gained for skilltype, where 0 means "leave it alone".
+        // Matching entries are SUMMED, not multiplied: two entries of 1.05 give 2.10, not 1.1025.
         public float GetSkillBonusLazyCache(Skills.SkillType skilltype) {
-            if (CalculatedSkillMods.TryGetValue(skilltype, out float skillbonus)) {  return skillbonus; }
-            float modifier_sum = 0;
-            if (SkillModifiers != null && SkillModifiers.Count > 0) {
-                foreach (var skillMod in SkillModifiers) {
-                    if (skillMod.Value.skill == Skills.SkillType.All || skillMod.Value.skill == skilltype) {
-                        modifier_sum += skillMod.Value.bonusModifer;
+            if (CalculatedSkillMods.TryGetValue(skilltype, out Tuple<float, float> cached) == false) {
+                float flat_sum = 0;
+                float influenced_sum = 0;
+                if (SkillModifiers != null && SkillModifiers.Count > 0) {
+                    foreach (var skillMod in SkillModifiers) {
+                        if (skillMod.Value.skill == Skills.SkillType.All || skillMod.Value.skill == skilltype) {
+                            if (skillMod.Value.skillInfluence) {
+                                influenced_sum += skillMod.Value.BonusModifier;
+                            } else {
+                                flat_sum += skillMod.Value.BonusModifier;
+                            }
+                        }
                     }
                 }
+                cached = new Tuple<float, float>(flat_sum, influenced_sum);
+                CalculatedSkillMods.Add(skilltype, cached);
             }
 
-            CalculatedSkillMods.Add(skilltype, modifier_sum);
-            return modifier_sum;
+            // Scale the influenced total as one multiplier rather than per entry, so a level with a
+            // single skill-influenced bonus collapses to exactly 1.0 (no change) at zero Deathlink
+            // skill instead of stacking a 1.0 per entry.
+            if (cached.Item2 == 0f) { return cached.Item1; }
+            return cached.Item1 + ScaleTowardsOne(cached.Item2, DeathProgressionSkill.DeathSkillCalculatePercentWithBonus());
         }
 
         public string GetLootModifiersDescription() {
@@ -254,10 +337,10 @@ public class DataObjects
             StringBuilder sb = new StringBuilder();
             if (SkillModifiers == null) { return sb.ToString(); }
             foreach (var entry in SkillModifiers) {
-                if (entry.Value.bonusModifer > 1f) {
-                    sb.AppendLine(Localization.instance.Localize($"{entry.Key} +<color={color_good}>{Mathf.Round((entry.Value.bonusModifer - 1f)*100)}%</color> $xp"));
+                if (entry.Value.BonusModifier > 1f) {
+                    sb.AppendLine(Localization.instance.Localize($"{entry.Key} +<color={color_good}>{Mathf.Round((entry.Value.BonusModifier - 1f)*100)}%</color> $xp"));
                 } else {
-                    sb.AppendLine(Localization.instance.Localize($"{entry.Key} -<color={color_bad}>{Mathf.Round((1f - entry.Value.bonusModifer)*100)}%</color> $xp"));
+                    sb.AppendLine(Localization.instance.Localize($"{entry.Key} -<color={color_bad}>{Mathf.Round((1f - entry.Value.BonusModifier)*100)}%</color> $xp"));
                 }
             }
             return sb.ToString();
@@ -267,10 +350,10 @@ public class DataObjects
             StringBuilder sb = new StringBuilder();
             if (ResourceModifiers == null) { return sb.ToString(); }
             foreach (var entry in ResourceModifiers) {
-                if (entry.Value.bonusModifer > 1f) {
-                    sb.AppendLine(Localization.instance.Localize($"{entry.Key} $drops <color={color_good}>{(entry.Value.bonusModifer - 1) * 100}%</color> $more {string.Join(",", entry.Value.bonusActions)}"));
+                if (entry.Value.BonusModifier > 1f) {
+                    sb.AppendLine(Localization.instance.Localize($"{entry.Key} $drops <color={color_good}>{(entry.Value.BonusModifier - 1) * 100}%</color> $more {string.Join(",", entry.Value.bonusActions)}"));
                 } else {
-                    sb.AppendLine(Localization.instance.Localize($"{entry.Key} $drops <color={color_bad}>{(1 - entry.Value.bonusModifer) * 100}%</color> $less {string.Join(",", entry.Value.bonusActions)}"));
+                    sb.AppendLine(Localization.instance.Localize($"{entry.Key} $drops <color={color_bad}>{(1 - entry.Value.BonusModifier) * 100}%</color> $less {string.Join(",", entry.Value.bonusActions)}"));
                 }
             }
 

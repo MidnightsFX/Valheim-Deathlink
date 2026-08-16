@@ -1,3 +1,50 @@
+  **0.11.0**
+---
+```
+Death choice configuration is much harder to break, and two settings that were documented but did
+nothing now work. Existing DeathChoices.yaml files load unchanged.
+
+Configuration
+- DeathChoices.yaml is now written with full documentation of every setting at the top of the file.
+- A typo no longer discards your entire configuration. An unrecognised setting or a misspelled value
+  is reported in the log with its line number and skipped; everything else still loads. A file that
+  cannot be parsed at all leaves the last working configuration in place and your file untouched.
+- A misspelled value now lists every valid option in the log.
+- Removing or renaming a death level now warns which players will be moved and where to.
+- Bad prefab names, duplicate prefabs across entries, a DefaultDeathChoice that does not exist, and
+  suspect skill loss ranges are all reported at load time.
+- New 'Fallback: true' setting marks which level players move to when their choice disappears.
+  Previously this was whichever level happened to be first in the file, so reordering changed it.
+- Config files are watched by polling rather than the OS watcher, so one save is one reload.
+- New Config Poll Interval and Config Apply Delay settings control how quickly edits are picked up.
+
+Fixes
+- Turning a setting OFF is no longer silently lost. Any 'false' you wrote for FoodLossOnDeath,
+  SkillLossOnDeath, FoodLossUsesDeathlink or EnableItemSavingChoices was being dropped whenever the
+  file was rewritten and reverted to on.
+- Clients now store the server's configuration exactly as sent instead of a lossy re-save, which also
+  stops the config file header being wiped on connect.
+- Fixed a crash on every harvest if one level listed the same prefab in two ResourceModifiers
+  entries, and the same crash on kills for duplicate DeathLootModifiers prefabs.
+
+Behaviour changes
+- DeathSkillRate now works. It was documented as "rate at which Deathlink skill increases" but was
+  never read. If you set it above 1, Deathlink skill will now climb faster than it did.
+- SkillInfluence now works, and now defaults to OFF. It was documented as "whether Deathlink skill
+  will influence this bonus" but was never read, so bonuses always applied in full. With it off you
+  keep exactly that behaviour; turn it on to scale a bonus in with Deathlink skill instead, from
+  nothing at 0% to the full amount at 100%.
+  Older versions wrote "skillInfluence: true" into every modifier whether you asked for it or not, so
+  your existing file almost certainly has it set everywhere. Deathlink clears those once, the first
+  time it loads your file, and says so in the log -- your bonuses keep working exactly as they did.
+  Turn it back on for any bonus you actually want to scale with skill; that choice is kept.
+- 'bonusModifer' is now spelled 'BonusModifier'. The old spelling is still read, so existing files
+  keep working, but files written by this version use the corrected name.
+- Newly written config files use PascalCase names. Settings are read without regard to case, so
+  older files are unaffected.
+- Clients and servers must both be on 0.11.0; the config sync format changed.
+```
+
   **0.10.3**
 ---
 ```

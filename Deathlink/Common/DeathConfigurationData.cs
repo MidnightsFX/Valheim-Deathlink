@@ -1,4 +1,5 @@
-﻿using HarmonyLib;
+using HarmonyLib;
+using Jotunn.Managers;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -15,6 +16,8 @@ namespace Deathlink.Common
             {
                 "Vanilla", new DeathChoiceLevel() {
                     DisplayName = "Vanilla",
+                    // Where a player lands when the level they had stored no longer exists.
+                    Fallback = true,
                     DeathStyle = new DeathProgressionDetails() { itemLossStyle = ItemLossStyle.None, foodLossOnDeath = true, itemSavedStyle = ItemSavedStyle.Tombstone, minSkillLossPercentage = 0.05f, maxSkillLossPercentage = 0.05f },
                     DeathLootModifiers = new Dictionary<string, DeathLootModifier>() { },
                     ResourceModifiers = new Dictionary<string, DeathResourceModifier> { },
@@ -27,10 +30,10 @@ namespace Deathlink.Common
                     DeathStyle = new DeathProgressionDetails() { itemLossStyle = ItemLossStyle.DeathlinkBased, foodLossUsesDeathlink = true, itemSavedStyle = ItemSavedStyle.Tombstone, minEquipmentKept = 3, maxEquipmentKept = 9, minItemsKept = 3, maxItemsKept = 15, minItemsKeptChoices = 1, maxItemsKeptChoices = 5, minSkillLossPercentage = 0.03f, maxSkillLossPercentage = 0.13f },
                     DeathLootModifiers = new Dictionary<string, DeathLootModifier>() { },
                     ResourceModifiers = new Dictionary<string, DeathResourceModifier> {
-                        { "Wood", new DeathResourceModifier() { prefabs = new List<string>() { "Wood", "FineWood", "RoundLog", "YggdrasilWood", "Blackwood" }, bonusModifer = 1.1f, bonusActions = new List<ResourceGainTypes>(){ ResourceGainTypes.Harvesting } } }
+                        { "Wood", new DeathResourceModifier() { prefabs = new List<string>() { "Wood", "FineWood", "RoundLog", "YggdrasilWood", "Blackwood" }, BonusModifier = 1.1f, bonusActions = new List<ResourceGainTypes>(){ ResourceGainTypes.Harvesting } } }
                     },
                     SkillModifiers = new Dictionary<string, DeathSkillModifier>() {
-                        { "All", new DeathSkillModifier() { bonusModifer = 1.05f, skill = Skills.SkillType.All } }
+                        { "All", new DeathSkillModifier() { BonusModifier = 1.05f, skill = Skills.SkillType.All } }
                     },
                 }
             },
@@ -40,11 +43,11 @@ namespace Deathlink.Common
                     DeathStyle = new DeathProgressionDetails() { itemLossStyle = ItemLossStyle.DeathlinkBased, itemSavedStyle = ItemSavedStyle.Tombstone, minEquipmentKept = 2, maxEquipmentKept = 6, minItemsKeptChoices = 1, maxItemsKeptChoices = 3, minSkillLossPercentage = 0.02f, maxSkillLossPercentage = 0.14f },
                     DeathLootModifiers = new Dictionary<string, DeathLootModifier>() { },
                     ResourceModifiers = new Dictionary<string, DeathResourceModifier> {
-                        { "Wood", new DeathResourceModifier() { prefabs = new List<string>() { "Wood", "FineWood", "RoundLog", "YggdrasilWood", "Blackwood" }, bonusModifer = 1.2f, bonusActions = new List<ResourceGainTypes>(){ ResourceGainTypes.Harvesting } } },
-                        { "Ore", new DeathResourceModifier() { prefabs = new List<string>() { "CopperOre", "TinOre", "IronScrap", "SilverOre", "BlackMetalScrap", "CopperScrap", "FlametalOreNew" }, bonusModifer = 1.2f, bonusActions = new List<ResourceGainTypes>(){ ResourceGainTypes.Harvesting } } }
+                        { "Wood", new DeathResourceModifier() { prefabs = new List<string>() { "Wood", "FineWood", "RoundLog", "YggdrasilWood", "Blackwood" }, BonusModifier = 1.2f, bonusActions = new List<ResourceGainTypes>(){ ResourceGainTypes.Harvesting } } },
+                        { "Ore", new DeathResourceModifier() { prefabs = new List<string>() { "CopperOre", "TinOre", "IronScrap", "SilverOre", "BlackMetalScrap", "CopperScrap", "FlametalOreNew" }, BonusModifier = 1.2f, bonusActions = new List<ResourceGainTypes>(){ ResourceGainTypes.Harvesting } } }
                     },
                     SkillModifiers = new Dictionary<string, DeathSkillModifier>() {
-                        { "All", new DeathSkillModifier() { bonusModifer = 1.1f, skill = Skills.SkillType.All } }
+                        { "All", new DeathSkillModifier() { BonusModifier = 1.1f, skill = Skills.SkillType.All } }
                     },
                 }
             },
@@ -58,11 +61,11 @@ namespace Deathlink.Common
                         { "AmberPearl", new DeathLootModifier() { chance = 0.05f, prefab = "AmberPearl", bonusActions = new List<ResourceGainTypes>() { ResourceGainTypes.Kills } } }
                     },
                     ResourceModifiers = new Dictionary<string, DeathResourceModifier> {
-                        { "Wood", new DeathResourceModifier() { prefabs = new List<string>() { "Wood", "FineWood", "RoundLog", "YggdrasilWood", "Blackwood" }, bonusModifer = 1.5f, bonusActions = new List<ResourceGainTypes>(){ ResourceGainTypes.Harvesting } } },
-                        { "Ore", new DeathResourceModifier() { prefabs = new List<string>() { "CopperOre", "TinOre", "IronScrap", "SilverOre", "BlackMetalScrap", "CopperScrap", "FlametalOreNew" }, bonusModifer = 1.5f, bonusActions = new List<ResourceGainTypes>(){ ResourceGainTypes.Harvesting } } }
+                        { "Wood", new DeathResourceModifier() { prefabs = new List<string>() { "Wood", "FineWood", "RoundLog", "YggdrasilWood", "Blackwood" }, BonusModifier = 1.5f, bonusActions = new List<ResourceGainTypes>(){ ResourceGainTypes.Harvesting } } },
+                        { "Ore", new DeathResourceModifier() { prefabs = new List<string>() { "CopperOre", "TinOre", "IronScrap", "SilverOre", "BlackMetalScrap", "CopperScrap", "FlametalOreNew" }, BonusModifier = 1.5f, bonusActions = new List<ResourceGainTypes>(){ ResourceGainTypes.Harvesting } } }
                     },
                     SkillModifiers = new Dictionary<string, DeathSkillModifier>() {
-                        { "All", new DeathSkillModifier() { bonusModifer = 1.2f, skill = Skills.SkillType.All } }
+                        { "All", new DeathSkillModifier() { BonusModifier = 1.2f, skill = Skills.SkillType.All } }
                     },
                 }
             },
@@ -77,12 +80,12 @@ namespace Deathlink.Common
                         { "SmallHealthPotion", new DeathLootModifier() { chance = 0.01f, prefab = "MeadHealthMinor", bonusActions = new List<ResourceGainTypes>() { ResourceGainTypes.Kills } } }
                     },
                     ResourceModifiers = new Dictionary<string, DeathResourceModifier> {
-                        { "Wood", new DeathResourceModifier() { prefabs = new List<string>() { "Wood", "FineWood", "RoundLog", "YggdrasilWood", "Blackwood", "ElderBark" }, bonusModifer = 2.0f, bonusActions = new List<ResourceGainTypes>(){ ResourceGainTypes.Harvesting } } },
-                        { "Stone", new DeathResourceModifier() { prefabs = new List<string>() { "Flint", "Stone", "BlackMarble", "Grausten" }, bonusModifer = 2.0f, bonusActions = new List<ResourceGainTypes>(){ ResourceGainTypes.Harvesting } } },
-                        { "Ore", new DeathResourceModifier() { prefabs = new List<string>() { "CopperOre", "TinOre", "IronScrap", "SilverOre", "BlackMetalScrap", "CopperScrap", "FlametalOreNew" }, bonusModifer = 2.0f, bonusActions = new List<ResourceGainTypes>(){ ResourceGainTypes.Harvesting } } }
+                        { "Wood", new DeathResourceModifier() { prefabs = new List<string>() { "Wood", "FineWood", "RoundLog", "YggdrasilWood", "Blackwood", "ElderBark" }, BonusModifier = 2.0f, bonusActions = new List<ResourceGainTypes>(){ ResourceGainTypes.Harvesting } } },
+                        { "Stone", new DeathResourceModifier() { prefabs = new List<string>() { "Flint", "Stone", "BlackMarble", "Grausten" }, BonusModifier = 2.0f, bonusActions = new List<ResourceGainTypes>(){ ResourceGainTypes.Harvesting } } },
+                        { "Ore", new DeathResourceModifier() { prefabs = new List<string>() { "CopperOre", "TinOre", "IronScrap", "SilverOre", "BlackMetalScrap", "CopperScrap", "FlametalOreNew" }, BonusModifier = 2.0f, bonusActions = new List<ResourceGainTypes>(){ ResourceGainTypes.Harvesting } } }
                     },
                     SkillModifiers = new Dictionary<string, DeathSkillModifier>() {
-                        { "All", new DeathSkillModifier() { bonusModifer = 1.3f, skill = Skills.SkillType.All } }
+                        { "All", new DeathSkillModifier() { BonusModifier = 1.3f, skill = Skills.SkillType.All } }
                     },
                 }
             }
@@ -108,18 +111,32 @@ namespace Deathlink.Common
         }
         };
 
-        internal static void Init() {
-            try {
-                UpdateDeathLevelsConfig(File.ReadAllText(ValConfig.deathChoicesPath));
-            } catch (Exception e) {
-                Jotunn.Logger.LogWarning($"There was an error updating the Death choice Level values, defaults will be used. Exception: {e}");
-            }
+        // Loading, watching, validating and syncing both yaml files is handled by Common/Config; the
+        // registrations live in DeathlinkConfigFiles.cs. What is left here is what to DO with the values.
 
-            try {
-                UpdatePlayerConfigSettings(File.ReadAllText(ValConfig.playerSettingsPath));
-            } catch (Exception e) {
-                Jotunn.Logger.LogWarning($"There was an error updating the player choice configs, defaults will be used. Exception: {e}");
+        /// <summary>
+        /// The level a player falls back to when the one they had stored is gone: the configured
+        /// DefaultDeathChoice if it resolves, otherwise the level marked Fallback, otherwise the first in
+        /// the file. Centralised so file ORDER stops being load-bearing -- previously every fallback path
+        /// took DeathLevels.First(), so simply reordering DeathChoices.yaml changed where orphaned
+        /// players landed.
+        /// </summary>
+        public static string ResolveFallbackKey() {
+            if (DeathLevels == null || DeathLevels.Count == 0) { return null; }
+
+            string configured = GetValidDefaultChoiceKey();
+            if (configured != null) { return configured; }
+
+            foreach (KeyValuePair<string, DeathChoiceLevel> level in DeathLevels) {
+                if (level.Value != null && level.Value.Fallback) { return level.Key; }
             }
+            return DeathLevels.First().Key;
+        }
+
+        public static DeathChoiceLevel ResolveFallbackLevel() {
+            string key = ResolveFallbackKey();
+            if (key != null && DeathLevels.TryGetValue(key, out DeathChoiceLevel level)) { return level; }
+            return defaultDeathLevels["Vanilla"];
         }
 
         [HarmonyPatch(typeof(Player))]
@@ -148,10 +165,25 @@ namespace Deathlink.Common
                         Logger.LogDebug($"Player deathlink configurations set {selectedDeathConfig}");
                         playerDeathConfiguration = DeathLevels[selectedDeathConfig];
                     } else {
-                        Logger.LogDebug("Player preference setting is not an available config, removing player choice.");
+                        // Info, not debug: this is what an admin sees after renaming or deleting a level,
+                        // and it is the only signal that a player was moved off it.
+                        Logger.LogInfo($"Stored death choice '{selectedDeathConfig}' is no longer configured; clearing it for this player.");
                         player.PlayerRemoveUniqueKey(DeathChoiceKey);
-                        // restart the check
-                        CheckAndSetPlayerDeathConfig(player);
+
+                        // Resolved straight through rather than by re-entering this method. The recursion
+                        // terminated only because the key had just been removed, which is a fragile thing
+                        // to depend on.
+                        string replacement = GetValidDefaultChoiceKey();
+                        if (replacement != null) {
+                            Logger.LogInfo($"Assigning configured default '{replacement}' instead.");
+                            player.AddUniqueKeyValue(DeathChoiceKey, replacement);
+                            playerDeathConfiguration = DeathLevels[replacement];
+                        } else {
+                            // No configured default: leave them keyless so the selection popup reappears,
+                            // but do not leave the previous level's penalties applied in the meantime.
+                            Logger.LogInfo("No default is configured, the selection popup will be shown.");
+                            playerDeathConfiguration = ResolveFallbackLevel();
+                        }
                     }
                 }
             } else {
@@ -197,7 +229,7 @@ namespace Deathlink.Common
             player.PlayerRemoveUniqueKey(DeathChoiceKey);
             player.PlayerRemoveUniqueKey(DeathChoiceChangesKey);
             // Drop the previous choice so CheckAndSetPlayerDeathConfig can't re-store stale modifiers.
-            playerDeathConfiguration = DeathLevels.First().Value;
+            playerDeathConfiguration = ResolveFallbackLevel();
             // Reapplies any configured default and rewrites the networked damage modifiers.
             CheckAndSetPlayerDeathConfig(player);
             WritePlayerChoices();
@@ -207,9 +239,8 @@ namespace Deathlink.Common
         internal static void CheckYamlConfig() {
             if (Player.m_localPlayer == null) {
                 Logger.LogWarning("Local player not defined, skipping setup.");
-                DeathLevels = defaultDeathLevels;
-                Logger.LogDebug($"Player preference setting is not an available config, using fallback {DeathLevels.First().Key}");
-                playerDeathConfiguration = DeathLevels.First().Value;
+                Logger.LogDebug($"Using fallback death level {ResolveFallbackKey()}");
+                playerDeathConfiguration = ResolveFallbackLevel();
                 return;
             }
             long playerID = Player.m_localPlayer.GetPlayerID();
@@ -221,8 +252,8 @@ namespace Deathlink.Common
                     Logger.LogDebug($"Player deathlink configurations set {selectedDeathConfig}");
                     playerDeathConfiguration = DeathLevels[selectedDeathConfig];
                 } else {
-                    Logger.LogDebug("Player preference setting is not an available config, using fallback");
-                    playerDeathConfiguration = DeathLevels.First().Value;
+                    Logger.LogInfo($"Stored death choice '{selectedDeathConfig}' is no longer configured, using fallback '{ResolveFallbackKey()}'.");
+                    playerDeathConfiguration = ResolveFallbackLevel();
                 }
             } else {
                 string defaultChoice = GetValidDefaultChoiceKey();
@@ -235,24 +266,11 @@ namespace Deathlink.Common
             }
         }
 
-        public static string PlayerSettingsDefaultConfig()
-        {
-            return DataObjects.yamlserializer.Serialize(playerSettings);
-        }
-
-        public static string DeathLevelsYamlDefaultConfig()
-        {
-            return DataObjects.yamlserializer.Serialize(DeathLevels);
-        }
-
-        public static void WriteDeathChoices()
-        {
-            File.WriteAllText(ValConfig.deathChoicesPath, yamlserializer.Serialize(DeathLevels));
-        }
-
+        // Goes through the config manager rather than File.WriteAllText so the documented header block at
+        // the top of CharacterSettings.yaml survives the write.
         public static void WritePlayerChoices()
         {
-            File.WriteAllText(ValConfig.playerSettingsPath, yamlserializer.Serialize(playerSettings));
+            YamlConfigManager.WriteCurrentToDisk(YamlConfigManager.CharacterSettings);
         }
 
         /// <summary>
@@ -315,26 +333,191 @@ namespace Deathlink.Common
             return GetPlayerChangesUsed(player) < ValConfig.AllowedDeathChoiceChanges.Value;
         }
 
-        public static void UpdateDeathLevelsConfig(string rawyaml) {
-            var parsed = yamldeserializer.Deserialize<Dictionary<string, DeathChoiceLevel>>(rawyaml);
-            // Deserialize returns null for an empty/all-comment file (it does not throw, so the
-            // caller's try/catch never sees it). An empty dictionary is just as unusable since the
-            // resolver relies on DeathLevels.First(). Fall back to the built-in defaults in both cases.
-            if (parsed == null || parsed.Count == 0) {
-                Logger.LogWarning("DeathChoices config is empty or could not be parsed, using built-in defaults.");
-                DeathLevels = defaultDeathLevels;
-                return;
-            }
-            DeathLevels = parsed;
-        }
-
-        public static void UpdatePlayerConfigSettings(string rawyaml) {
-            var added_cfgs = yamldeserializer.Deserialize<Dictionary<long, DeathConfiguration>>(rawyaml);
-
-            foreach (var kvp in added_cfgs) {
+        // Apply hook for CharacterSettings.yaml. Additive on purpose: this file is save data that the
+        // server owns, and a client must not have entries it already knows about overwritten by a
+        // partial payload.
+        public static void MergePlayerSettings(Dictionary<long, DeathConfiguration> incoming) {
+            if (incoming == null) { return; }
+            foreach (var kvp in incoming) {
                 if (playerSettings.ContainsKey(kvp.Key)) { continue; }
                 playerSettings.Add(kvp.Key, kvp.Value);
             }
+        }
+
+        /// <summary>
+        /// One-shot migration for files written by 0.10.x or earlier.
+        ///
+        /// Those versions always wrote "skillInfluence: true" into every resource and skill modifier --
+        /// the field's initializer was true and it carried no [DefaultValue], so the serializer emitted
+        /// it whether or not anyone had asked for it. The field was also never read, so every one of
+        /// those bonuses actually applied in full. Now that skillInfluence works, leaving those values
+        /// in place would silently weaken every existing config, so they are cleared once on upgrade.
+        ///
+        /// The old misspelling "bonusModifer" is the marker: only a pre-0.11 file can contain it. The
+        /// rewrite that follows this migration emits the corrected spelling, which erases the marker --
+        /// so this runs exactly once, and an admin who deliberately turns skillInfluence on afterwards
+        /// keeps it.
+        /// </summary>
+        public static bool MigrateLegacySkillInfluence(Dictionary<string, DeathChoiceLevel> levels) {
+            if (levels == null || WrittenBeforeSkillInfluenceWorked(levels) == false) { return false; }
+
+            int cleared = 0;
+            foreach (DeathChoiceLevel level in levels.Values) {
+                if (level == null) { continue; }
+                if (level.ResourceModifiers != null) {
+                    foreach (DeathResourceModifier modifier in level.ResourceModifiers.Values) {
+                        if (modifier == null || modifier.skillInfluence == false) { continue; }
+                        modifier.skillInfluence = false;
+                        cleared++;
+                    }
+                }
+                if (level.SkillModifiers == null) { continue; }
+                foreach (DeathSkillModifier modifier in level.SkillModifiers.Values) {
+                    if (modifier == null || modifier.skillInfluence == false) { continue; }
+                    modifier.skillInfluence = false;
+                    cleared++;
+                }
+            }
+
+            if (cleared > 0) {
+                Logger.LogInfo($"DeathChoices.yaml predates Deathlink 0.11. SkillInfluence was written into " +
+                    $"every modifier by older versions but never applied, so it has been turned off on {cleared} " +
+                    "modifier(s) to keep those bonuses working exactly as they did. Turn it back on for any bonus " +
+                    "you want to scale with Deathlink skill.");
+            }
+
+            // True even when nothing was cleared, so the file is still rewritten in the current format.
+            // That is what removes the legacy spelling and stops this migration running again.
+            return true;
+        }
+
+        private static bool WrittenBeforeSkillInfluenceWorked(Dictionary<string, DeathChoiceLevel> levels) {
+            foreach (DeathChoiceLevel level in levels.Values) {
+                if (level == null) { continue; }
+                if (level.ResourceModifiers != null) {
+                    foreach (DeathResourceModifier modifier in level.ResourceModifiers.Values) {
+                        if (modifier != null && modifier.ReadWithLegacySpelling) { return true; }
+                    }
+                }
+                if (level.SkillModifiers == null) { continue; }
+                foreach (DeathSkillModifier modifier in level.SkillModifiers.Values) {
+                    if (modifier != null && modifier.ReadWithLegacySpelling) { return true; }
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Validate hook for DeathChoices.yaml. <paramref name="previous"/> is null on the first load and
+        /// the currently-live levels on every load after that, which is what lets this report levels that
+        /// were REMOVED -- the edit whose consequences an admin is least likely to predict.
+        /// </summary>
+        public static ValidationReport ValidateDeathLevels(Dictionary<string, DeathChoiceLevel> next, Dictionary<string, DeathChoiceLevel> previous) {
+            ValidationReport report = new ValidationReport();
+
+            if (next == null || next.Count == 0) {
+                return report.Error("it defines no death levels, so there would be nothing for a player to choose");
+            }
+
+            int fallbacks = 0;
+            foreach (KeyValuePair<string, DeathChoiceLevel> level in next) {
+                DeathChoiceLevel value = level.Value;
+                if (value == null) {
+                    report.Error($"level '{level.Key}' has no settings under it");
+                    continue;
+                }
+                if (value.Fallback) { fallbacks++; }
+                if (value.DeathStyle == null) {
+                    report.Error($"level '{level.Key}' has an empty DeathStyle block");
+                    continue;
+                }
+
+                if (value.DeathSkillRate <= 0f) {
+                    report.Warn($"level '{level.Key}' has DeathSkillRate {value.DeathSkillRate}; Deathlink skill will never increase on it.");
+                } else if (value.DeathSkillRate > 10f) {
+                    report.Warn($"level '{level.Key}' has DeathSkillRate {value.DeathSkillRate}, which will max the Deathlink skill very quickly.");
+                }
+
+                if (value.DeathStyle.minSkillLossPercentage > value.DeathStyle.maxSkillLossPercentage) {
+                    report.Warn($"level '{level.Key}' has MinSkillLossPercentage above MaxSkillLossPercentage; " +
+                        "skill loss will get WORSE as Deathlink skill increases.");
+                }
+
+                ValidateResourceModifiers(level.Key, value, report);
+                ValidateLootModifiers(level.Key, value, report);
+            }
+
+            if (fallbacks == 0) {
+                report.Warn($"no level is marked 'Fallback: true'. '{next.First().Key}' is being used because it is " +
+                    "first in the file, which means reordering the file would change it. Mark one level as the fallback.");
+            } else if (fallbacks > 1) {
+                report.Warn($"{fallbacks} levels are marked 'Fallback: true'. The first one in the file wins.");
+            }
+
+            string configuredDefault = ValConfig.DefaultDeathChoice != null ? ValConfig.DefaultDeathChoice.Value : null;
+            if (string.IsNullOrEmpty(configuredDefault) == false && next.ContainsKey(configuredDefault) == false) {
+                report.Warn($"the DefaultDeathChoice setting names '{configuredDefault}', which is not a level in this " +
+                    "file. New players will be shown the selection popup instead." +
+                    ConfigValidation.SuggestKey(configuredDefault, next.Keys));
+            }
+
+            if (previous != null) {
+                foreach (string key in previous.Keys) {
+                    if (next.ContainsKey(key)) { continue; }
+                    report.Warn($"level '{key}' was removed. Players who had it selected will be moved to " +
+                        $"'{(next.ContainsKey(ResolveFallbackKey() ?? "") ? ResolveFallbackKey() : next.First().Key)}' " +
+                        "or re-prompted the next time they load.");
+                }
+            }
+
+            return report;
+        }
+
+        private static void ValidateResourceModifiers(string levelKey, DeathChoiceLevel level, ValidationReport report) {
+            if (level.ResourceModifiers == null) { return; }
+
+            // Which entry first claimed each prefab, so an overlap can name both sides. A prefab listed
+            // twice in one level is not fatal -- first entry wins -- but only one of the two bonuses will
+            // ever apply, which is almost never what was intended.
+            Dictionary<string, string> claimedBy = new Dictionary<string, string>();
+
+            foreach (KeyValuePair<string, DeathResourceModifier> entry in level.ResourceModifiers) {
+                if (entry.Value == null || entry.Value.prefabs == null) { continue; }
+                foreach (string prefab in entry.Value.prefabs) {
+                    if (claimedBy.TryGetValue(prefab, out string owner)) {
+                        report.Warn($"level '{levelKey}' lists prefab '{prefab}' in both '{owner}' and '{entry.Key}'. " +
+                            $"Only '{owner}' will apply.");
+                        continue;
+                    }
+                    claimedBy[prefab] = entry.Key;
+                    WarnIfUnknownPrefab(levelKey, $"ResourceModifiers.{entry.Key}", prefab, report);
+                }
+            }
+        }
+
+        private static void ValidateLootModifiers(string levelKey, DeathChoiceLevel level, ValidationReport report) {
+            if (level.DeathLootModifiers == null) { return; }
+            foreach (KeyValuePair<string, DeathLootModifier> entry in level.DeathLootModifiers) {
+                if (entry.Value == null) { continue; }
+                if (string.IsNullOrEmpty(entry.Value.prefab)) {
+                    report.Warn($"level '{levelKey}' loot entry '{entry.Key}' has no Prefab set, it will be skipped.");
+                    continue;
+                }
+                WarnIfUnknownPrefab(levelKey, $"DeathLootModifiers.{entry.Key}", entry.Value.prefab, report);
+                if (entry.Value.chance <= 0f || entry.Value.chance > 1f) {
+                    report.Warn($"level '{levelKey}' loot entry '{entry.Key}' has Chance {entry.Value.chance}; " +
+                        "it is a 0-1 probability, so this will never drop or always drops.");
+                }
+            }
+        }
+
+        // Silent until the prefab table exists. DeathChoices.yaml is registered with NeedsPrefabs, and
+        // Deathlink re-runs validation from PrefabManager.OnPrefabsRegistered -- without this guard the
+        // startup load would warn about every prefab name in the file.
+        private static void WarnIfUnknownPrefab(string levelKey, string where, string prefab, ValidationReport report) {
+            if (PrefabManager.Instance == null) { return; }
+            if (PrefabManager.Instance.GetPrefab(prefab) != null) { return; }
+            report.Warn($"level '{levelKey}' {where} names prefab '{prefab}', which does not exist. It will be skipped.");
         }
     }
 }

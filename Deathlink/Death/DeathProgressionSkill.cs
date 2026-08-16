@@ -134,8 +134,12 @@ public static class DeathProgressionSkill
                     EpicMMOSystem_API.AddExp(wackyXP);
                 }
 
-                Logger.LogDebug($"DeathProgression skill bonus from survival (survive time: {__instance.m_timeSinceDeath}) {skillbonus} x {total_xp_from_actions} = {curved_xp}");
-                Player.m_localPlayer.RaiseSkill(DeathSkill, curved_xp);
+                // DeathSkillRate is the level's "how fast does Deathlink skill itself climb" dial. It has
+                // been in the shipped README and in real config files since the beginning but was never
+                // read; applying it here is what makes those files mean what they say.
+                float skill_rate = Deathlink.pcfg().DeathSkillRate;
+                Logger.LogDebug($"DeathProgression skill bonus from survival (survive time: {__instance.m_timeSinceDeath}) {skillbonus} x {total_xp_from_actions} = {curved_xp}, death skill rate {skill_rate}");
+                Player.m_localPlayer.RaiseSkill(DeathSkill, curved_xp * skill_rate);
             }
         }
     }

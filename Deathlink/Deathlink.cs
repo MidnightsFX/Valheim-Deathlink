@@ -1,4 +1,4 @@
-﻿using BepInEx;
+using BepInEx;
 using BepInEx.Logging;
 using Deathlink.Common;
 using Deathlink.Death;
@@ -27,7 +27,7 @@ namespace Deathlink
     {
         public const string PluginGUID = "MidnightsFX.Deathlink";
         public const string PluginName = "Deathlink";
-        public const string PluginVersion = "0.10.3";
+        public const string PluginVersion = "0.11.0";
 
         public ValConfig cfg;
         internal static AssetBundle EmbeddedResourceBundle;
@@ -68,7 +68,9 @@ namespace Deathlink
             } 
 
             Harmony.CreateAndPatchAll(Assembly.GetExecutingAssembly());
-            DeathConfigurationData.Init();
+            // Yaml configs. After ValConfig (which owns cfgFolder and the poll/apply intervals) and after
+            // Harmony, so a validator can see anything a patch registered. See Common/Config.
+            YamlConfigManager.Init();
             LeaderboardData.Init();
             StartCoroutine(LeaderboardData.SyncLoop());
             TerminalCommands.AddCommands();

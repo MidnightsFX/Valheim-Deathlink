@@ -7,7 +7,7 @@ using UnityEngine;
 namespace Deathlink.Death
 {
     /// <summary>
-    /// Applies a death choice's resource multiplier (<c>bonusModifer</c>) to harvested drops.
+    /// Applies a death choice's resource multiplier (<c>BonusModifier</c>) to harvested drops.
     /// The modifier is a true multiplier: values above 1.0 increase drops, values below 1.0
     /// decrease them (down to nothing). Trees, mine rocks and destructibles all build their
     /// drops through <see cref="DropTable.GetDropList"/> before spawning, so we rescale that

@@ -22,6 +22,15 @@ Each of these configuration sections below can be applied to any number of profi
 Deathlink selection is one per character and is stored on the server the character is on,a character can have
 different selections in singleplayer or multiplayer.
 
+`DeathChoices.yaml` is written with a full explanation of every setting at the top of the file, so you can
+configure it without coming back here. Edits are picked up while the game is running and are pushed to
+connected clients automatically.
+
+Settings are matched without regard to case, so files written by older versions keep working untouched.
+A mistake costs you one setting rather than the whole file: an unknown setting or a misspelled value is
+reported in the log with its line number and skipped, and if the file cannot be parsed at all, the levels
+that last loaded cleanly stay in use and your file is left exactly as you wrote it.
+
 ### Example Configuration
 
 <details>
@@ -29,32 +38,30 @@ different selections in singleplayer or multiplayer.
   
 ```yaml
 Rougelike3:
-  displayName: Berserker
-  deathStyle:
-    foodLossOnDeath: true
-    foodLossUsesDeathlink: true
-    maxEquipmentKept: 3
-    skillLossOnDeath: true
-    maxSkillLossPercentage: 0.2
-    minSkillLossPercentage: 0.05
-    itemLossStyle: DeathlinkBased
-    nonSkillCheckedItemAction: Tombstone
-  deathSkillRate: 1
-  resourceModifiers:
+  DisplayName: Berserker
+  DeathStyle:
+    FoodLossOnDeath: true
+    FoodLossUsesDeathlink: true
+    MaxEquipmentKept: 3
+    SkillLossOnDeath: true
+    MaxSkillLossPercentage: 0.2
+    MinSkillLossPercentage: 0.05
+    ItemLossStyle: DeathlinkBased
+    NonSkillCheckedItemAction: Tombstone
+  DeathSkillRate: 1
+  ResourceModifiers:
     Wood:
-      skillInfluence: true
-      prefabs:
+      Prefabs:
       - Wood
       - FineWood
       - RoundLog
       - YggdrasilWood
       - Blackwood
-      bonusModifer: 1.5
-      bonusActions:
+      BonusModifier: 1.5
+      BonusActions:
       - Harvesting
     Ore:
-      skillInfluence: true
-      prefabs:
+      Prefabs:
       - CopperOre
       - TinOre
       - IronScrap
@@ -62,20 +69,19 @@ Rougelike3:
       - BlackMetalScrap
       - CopperScrap
       - FlametalOreNew
-      bonusModifer: 1.5
-      bonusActions:
+      BonusModifier: 1.5
+      BonusActions:
       - Harvesting
-  skillModifiers:
+  SkillModifiers:
     All:
-      skillInfluence: true
-      skill: All
-      bonusModifer: 1.2
-  deathLootModifiers:
+      Skill: All
+      BonusModifier: 1.2
+  DeathLootModifiers:
     AmberPearl:
-      prefab: AmberPearl
-      chance: 0.05
-      amount: 1
-      bonusActions:
+      Prefab: AmberPearl
+      Chance: 0.05
+      Amount: 1
+      BonusActions:
       - Kills
 ```
 
@@ -85,37 +91,39 @@ Rougelike3:
 Deathstyle configuration governs what happens when you die.
 
 ```yaml
-  deathStyle:
-    foodLossOnDeath: true                  # Player will loose food on death or not
-    foodLossUsesDeathlink: true            # Food loss is based on skill level from loosing all foods, to none
-    maxEquipmentKept: 3                    # The maximum number of equiped items to keep on death
-    skillLossOnDeath: true                 # Whether or not skill loss occurs on death
-    maxSkillLossPercentage: 0.2            # The maximum percentage of skill lost on death (you start here, example is 20%)
-    minSkillLossPercentage: 0.05           # The minimum skill loss, at max skill level (example is 5%)
-    itemLossStyle: DeathlinkBased          # Item loss style, can be None, DestroyNonWeaponArmor, DeathlinkBased, DestroyAll
-    nonSkillCheckedItemAction: Tombstone   # If items are set to avoid skillcheck, what happens to them, can be Destroy, Tombstone, Save
-    itemSavedStyle: Tombstone              # Items that are saved can be: OnCharacter, Tombstone
-  deathSkillRate: 1                        # Rate at which Deathlink skill increases, higher is faster
+  DeathStyle:
+    FoodLossOnDeath: true                  # Player will loose food on death or not
+    FoodLossUsesDeathlink: true            # Food loss is based on skill level from loosing all foods, to none
+    MaxEquipmentKept: 3                    # The maximum number of equiped items to keep on death
+    SkillLossOnDeath: true                 # Whether or not skill loss occurs on death
+    MaxSkillLossPercentage: 0.2            # The maximum percentage of skill lost on death (you start here, example is 20%)
+    MinSkillLossPercentage: 0.05           # The minimum skill loss, at max skill level (example is 5%)
+    ItemLossStyle: DeathlinkBased          # Item loss style, can be None, DestroyNonWeaponArmor, DeathlinkBased, DestroyAll
+    NonSkillCheckedItemAction: Tombstone   # If items are set to avoid skillcheck, what happens to them, can be Destroy, Tombstone, Save
+    ItemSavedStyle: Tombstone              # Items that are saved can be: OnCharacter, Tombstone
+  DeathSkillRate: 1                        # Rate at which Deathlink skill increases, higher is faster
+  Fallback: true                           # Marks the level players are moved to when the one they had
+                                           # selected is renamed or removed. Set it on exactly one level.
 ```
 
 ### Resource Configuration
 Resource configuration provides a way to get additional resources from kills or harvesting
 ```yaml
-resourceModifiers:
+ResourceModifiers:
     Wood:                     # Name of the entry, can be anything
-      skillInfluence: true    # Whether or not Deathlink skill will influence this bonus
-      prefabs:                # List of prefabs that this bonus applies to
+      SkillInfluence: false   # Off by default: the bonus applies in full from the start. Set true to
+                              # scale it in with Deathlink skill instead - nothing at 0%, full at 100%.
+      Prefabs:                # List of prefabs that this bonus applies to
       - Wood
       - FineWood
       - RoundLog
       - YggdrasilWood
       - Blackwood
-      bonusModifer: 1.5       # The bonus modifier, larger is more, 1.5 is 50% more
-      bonusActions:           # List of actions that will trigger this bonus can be Kills or Harvesting
+      BonusModifier: 1.5       # The bonus modifier, larger is more, 1.5 is 50% more
+      BonusActions:           # List of actions that will trigger this bonus can be Kills or Harvesting
       - Harvesting
     Ore:
-      skillInfluence: true
-      prefabs:
+      Prefabs:
       - CopperOre
       - TinOre
       - IronScrap
@@ -123,30 +131,32 @@ resourceModifiers:
       - BlackMetalScrap
       - CopperScrap
       - FlametalOreNew
-      bonusModifer: 1.5
-      bonusActions:
+      BonusModifier: 1.5
+      BonusActions:
       - Harvesting
 ```
 
 ### Skill Configuration
 Skill configuration proviedes a way to grant additional XP or reduced XP for any or all skills
 ```yaml
-  skillModifiers:
+  SkillModifiers:
     All:                      # Name of the entry, can be anything
-      skillInfluence: true    # Whether or not Deathlink skill will influence this bonus
-      skill: All              # The skill that this bonus applies to, can be All or any specific skill name
-      bonusModifer: 1.2       # The bonus modifier, larger is more, 1.2 is 20% more
+      SkillInfluence: false   # Off by default: the bonus applies in full from the start. Set true to
+                              # scale it in with Deathlink skill instead - nothing at 0%, full at 100%.
+      Skill: All              # The skill that this bonus applies to, can be All or any specific skill name
+      BonusModifier: 1.2       # The bonus modifier, larger is more, 1.2 is 20% more.
+                              # Matching entries are ADDED together, not multiplied.
 ```
 
 ### Death Loot Configuration
 Death loot configuration provides a way to gain additional items on kills, specific to player Death choice
 ```yaml
-  deathLootModifiers:
+  DeathLootModifiers:
     AmberPearl:               # Name of the entry, can be anything
-      prefab: AmberPearl      # The prefab name of the item to drop
-      chance: 0.05            # The base chance of the item dropping, 0.05 is 5%
-      amount: 1               # The amount of the item to drop
-      bonusActions:           # List of actions that will trigger this bonus can be Kills or Harvesting
+      Prefab: AmberPearl      # The prefab name of the item to drop
+      Chance: 0.05            # The base chance of the item dropping, 0.05 is 5%
+      Amount: 1               # The amount of the item to drop
+      BonusActions:           # List of actions that will trigger this bonus can be Kills or Harvesting
       - Kills
 ```
 

@@ -1,4 +1,4 @@
-﻿using BepInEx;
+using BepInEx;
 using BepInEx.Configuration;
 using Deathlink.Death;
 using Jotunn;
@@ -35,20 +35,20 @@ public class ValConfig
     public static ConfigEntry<bool> EnableLeaderboard;
     public static ConfigEntry<float> LeaderboardSyncInterval;
 
-    const string cfgFolder = "Deathlink";
-    const string deathChoicesCfg = "DeathChoices.yaml";
-    const string deathSettingsCfg = "CharacterSettings.yaml";
+    public static ConfigEntry<float> ConfigApplyDelay;
+    public static ConfigEntry<float> ConfigPollIntervalSeconds;
+
+    // Read by Common/Config. Derived from the plugin so it cannot drift from the mod's name.
+    internal static readonly string cfgFolder = Deathlink.PluginName;
     const string leaderboardCfg = "leaderboard.yaml";
-    internal static String deathChoicesPath = Path.Combine(Paths.ConfigPath, cfgFolder, deathChoicesCfg);
-    internal static String playerSettingsPath = Path.Combine(Paths.ConfigPath, cfgFolder, deathSettingsCfg);
     internal static String leaderboardPath = Path.Combine(Paths.ConfigPath, cfgFolder, leaderboardCfg);
 
-    private static CustomRPC deathChoiceRPC;
-    private static CustomRPC characterSettingRPC;
+    // DeathChoices.yaml and CharacterSettings.yaml are owned by Common/Config -- paths, defaults,
+    // watching, validation and the sync RPCs all come from there. See DeathlinkConfigFiles.cs.
     public static CustomRPC resetChoiceRPC;
 
     public static ConfigEntry<float> SkillProgressUpdateCheckInterval;
-    
+
     public ValConfig(ConfigFile Config)
     {
         // ensure all the config values are created
@@ -56,7 +56,16 @@ public class ValConfig
         cfg.SaveOnConfigSet = true;
         CreateConfigValues(Config);
         SetupConfigRPCs();
-        LoadYamlConfigs();
+
+        // A client must not reload: Jotunn has already replaced its in-memory values with the server's,
+        // and a reload would clobber them with whatever this machine has on disk.
+        ConfigFileWatcher.Register(cfg.ConfigFilePath, OnMainConfigFileChanged);
+    }
+
+    private static void OnMainConfigFileChanged(string _) {
+        if (ZNet.instance == null || ZNet.instance.IsServer() == false) { return; }
+        Logger.LogInfo("Configuration file has been changed, reloading settings.");
+        cfg.Reload();
     }
 
     public static string GetSecondaryConfigDirectoryPath() {
@@ -68,12 +77,9 @@ public class ValConfig
 
     public void SetupConfigRPCs()
     {
-        deathChoiceRPC = NetworkManager.Instance.AddRPC("DEATHLK_CH", OnServerRecieveConfigs, OnClientReceiveDeathChoiceConfigs);
-        characterSettingRPC = NetworkManager.Instance.AddRPC("DEATHLK_PSET", OnServerRecievePlayerSettingsConfig, OnClientReceivePlayerSettingsConfigs);
+        // Resetting a player's choice is a targeted admin action against a person, not a config file, so
+        // it stays here rather than moving into the config framework.
         resetChoiceRPC = NetworkManager.Instance.AddRPC("DEATHLK_RESET", OnServerRecieveResetRPC, OnClientRecieveResetRPC);
-
-        SynchronizationManager.Instance.AddInitialSynchronization(deathChoiceRPC, SendDeathChoices);
-        SynchronizationManager.Instance.AddInitialSynchronization(characterSettingRPC, SendCharSettings);
 
         LeaderboardData.SetupRPC();
     }
@@ -108,6 +114,11 @@ public class ValConfig
         EnableLeaderboard = BindServerConfig("Leaderboard", "EnableLeaderboard", true, "Whether the server-tracked leaderboard (shown in the Trophies tab) is enabled.");
         LeaderboardSyncInterval = BindServerConfig("Leaderboard", "LeaderboardSyncInterval", 30f, "How often (in minutes) clients report their stats to the server and the server broadcasts the leaderboard back to clients.", false, 5f, 120f);
 
+        // Read by Common/Config. The poll interval drives how quickly a hand edit to DeathChoices.yaml is
+        // noticed; the apply delay coalesces the two writes most editors make when saving one file.
+        ConfigPollIntervalSeconds = BindServerConfig("Config", "Config Poll Interval", 30f, "Seconds between checks for edits to this mod's yaml config files and its BepInEx config file. Lower reacts faster to a hand edit, higher does less disk work.", true, 1f, 300f);
+        ConfigApplyDelay = BindServerConfig("Config", "Config Apply Delay", 1f, "Delay in seconds before a changed config file is applied in-game. Coalesces a burst of rapid edits into a single apply. Set to 0 to apply instantly.", true, 0f, 10f);
+
         // Debugmode
         EnableDebugMode = Config.Bind("Client config", "EnableDebugMode", false,
             new ConfigDescription("Enables Debug logging.",
@@ -115,122 +126,6 @@ public class ValConfig
             new ConfigurationManagerAttributes { IsAdvanced = true }));
         EnableDebugMode.SettingChanged += Logger.enableDebugLogging;
         Logger.CheckEnableDebugLogging();
-    }
-
-    internal void LoadYamlConfigs()
-    {
-        string externalConfigFolder = ValConfig.GetSecondaryConfigDirectoryPath();
-        string[] presentFiles = Directory.GetFiles(externalConfigFolder);
-        bool foundDeathChoices = false;
-        bool foundCharacterSettings = false;
-
-        foreach (string configFile in presentFiles)
-        {
-            if (configFile.Contains(deathChoicesCfg))
-            {
-                Logger.LogDebug($"Found Deathchoice configuration: {configFile}");
-                deathChoicesPath = configFile;
-                foundDeathChoices = true;
-            }
-
-            if (configFile.Contains(deathSettingsCfg))
-            {
-                Logger.LogDebug($"Found Character configuration: {configFile}");
-                playerSettingsPath = configFile;
-                foundCharacterSettings = true;
-            }
-        }
-
-        if (foundDeathChoices == false)
-        {
-            Logger.LogDebug("Death Choices missing, recreating.");
-            using (StreamWriter writetext = new StreamWriter(deathChoicesPath))
-            {
-                String header = @"#################################################
-# Deathlink - Death Choice Configuration
-#################################################
-";
-                writetext.WriteLine(header);
-                writetext.WriteLine(DeathConfigurationData.DeathLevelsYamlDefaultConfig());
-            }
-        }
-
-        if (foundCharacterSettings == false)
-        {
-            Logger.LogDebug("Character Settings missing, recreating.");
-            using (StreamWriter writetext = new StreamWriter(playerSettingsPath))
-            {
-                String header = @"#################################################
-# Deathlink - Character settings
-#################################################
-";
-                writetext.WriteLine(header);
-                writetext.WriteLine(DeathConfigurationData.PlayerSettingsDefaultConfig());
-            }
-        }
-
-        SetupFileWatcher(deathChoicesCfg);
-        SetupFileWatcher(deathSettingsCfg);
-    }
-
-    private void SetupFileWatcher(string filtername)
-    {
-        FileSystemWatcher fw = new FileSystemWatcher();
-        fw.Path = ValConfig.GetSecondaryConfigDirectoryPath();
-        fw.NotifyFilter = NotifyFilters.LastWrite;
-        fw.Filter = filtername;
-        fw.Changed += new FileSystemEventHandler(UpdateConfigFileOnChange);
-        fw.Created += new FileSystemEventHandler(UpdateConfigFileOnChange);
-        fw.Renamed += new RenamedEventHandler(UpdateConfigFileOnChange);
-        fw.SynchronizingObject = ThreadingHelper.SynchronizingObject;
-        fw.EnableRaisingEvents = true;
-    }
-
-    private static void UpdateConfigFileOnChange(object sender, FileSystemEventArgs e)
-    {
-        if (SynchronizationManager.Instance.PlayerIsAdmin == false)
-        {
-            Logger.LogDebug("Player is not an admin, and not allowed to change local configuration. Ignoring.");
-            return;
-        }
-        if (!File.Exists(e.FullPath)) { return; }
-
-        string filetext = File.ReadAllText(e.FullPath);
-        var fileInfo = new FileInfo(e.FullPath);
-        Logger.LogDebug($"Filewatch changes from: ({fileInfo.Name}) {fileInfo.FullName}");
-        switch (fileInfo.Name)
-        {
-            case deathChoicesCfg:
-                Logger.LogDebug("Triggering Death Choices Settings update.");
-                DeathConfigurationData.UpdateDeathLevelsConfig(filetext);
-                deathChoiceRPC.SendPackage(ZNet.instance.m_peers, SendFileAsZPackage(e.FullPath));
-                break;
-            //case deathSettingsCfg:
-            //    Logger.LogDebug("Triggering Level Settings update.");
-            //    // LevelSystemData.UpdateYamlConfig(filetext);
-            //    characterSettingRPC.SendPackage(ZNet.instance.m_peers, SendFileAsZPackage(e.FullPath));
-            //    break;
-        }
-    }
-
-    private static IEnumerator OnClientReceiveDeathChoiceConfigs(long sender, ZPackage package) {
-        var yaml = package.ReadString();
-        DeathConfigurationData.UpdateDeathLevelsConfig(yaml);
-        DeathConfigurationData.WriteDeathChoices();
-        yield return null;
-    }
-
-    private static IEnumerator OnServerRecieveConfigs(long sender, ZPackage package)
-    {
-        yield return null;
-    }
-
-    private static IEnumerator OnServerRecievePlayerSettingsConfig(long sender, ZPackage package)
-    {
-        var yaml = package.ReadString();
-        DeathConfigurationData.UpdatePlayerConfigSettings(yaml);
-        DeathConfigurationData.WritePlayerChoices();
-        yield return null;
     }
 
     private static IEnumerator OnServerRecieveResetRPC(long sender, ZPackage package)
@@ -302,31 +197,6 @@ public class ValConfig
         DeathConfigurationData.ResetLocalPlayerChoice();
 
         yield return null;
-    }
-
-    private static IEnumerator OnClientReceivePlayerSettingsConfigs(long sender, ZPackage package)
-    {
-        // only updates in memory
-        var yaml = package.ReadString();
-        DeathConfigurationData.UpdatePlayerConfigSettings(yaml);
-        yield return null;
-    }
-
-    private static ZPackage SendFileAsZPackage(string filepath)
-    {
-        string filecontents = File.ReadAllText(filepath);
-        ZPackage package = new ZPackage();
-        package.Write(filecontents);
-        return package;
-    }
-
-    private static ZPackage SendCharSettings()
-    {
-        return SendFileAsZPackage(playerSettingsPath);
-    }
-    private static ZPackage SendDeathChoices()
-    {
-        return SendFileAsZPackage(deathChoicesPath);
     }
 
     /// <summary>
