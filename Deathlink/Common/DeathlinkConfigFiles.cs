@@ -14,8 +14,27 @@ namespace Deathlink.Common {
             DeathChoices = Register(new YamlConfigFile<Dictionary<string, DeathChoiceLevel>>("DeathChoices.yaml") {
                 Header = DeathChoicesHeader,
                 Defaults = () => DeathConfigurationData.defaultDeathLevels,
-                Apply = parsed => DeathConfigurationData.DeathLevels = parsed,
+                Apply = parsed => {
+                    DeathConfigurationData.DeathLevels = parsed;
+
+                    // New levels mean new prefab names to check -- but only the loads that ran before the
+                    // prefab table existed left them unchecked, and only those need the deferred pass.
+                    DeathConfigurationData.ArmPrefabValidationIfUnchecked();
+
+                    // playerDeathConfiguration holds a REFERENCE into the dictionary we just replaced, and
+                    // is otherwise only re-resolved at Player.Load or when the player picks a level.
+                    // Without re-resolving here, a reload -- hand edit, server broadcast or in-game edit --
+                    // leaves the local player running the previous level object: stale lazy caches and
+                    // stale damage modifiers on their ZDO, with nothing on screen to say so.
+                    if (Player.m_localPlayer != null) {
+                        DeathConfigurationData.CheckAndSetPlayerDeathConfig(Player.m_localPlayer);
+                    }
+                    Death.DeathChoices.DeathChoiceUI.RefreshIfBuilt();
+                },
                 Validate = DeathConfigurationData.ValidateDeathLevels,
+                // Lets a connected admin push an edited copy to the server. The server still admin-gates
+                // and validates before accepting; see Common/Config/ConfigNetwork.
+                AllowAdminEdit = true,
                 // Clears the skillInfluence flags that older versions wrote into every modifier without
                 // being asked, so upgrading does not quietly weaken an existing config. Runs once: the
                 // rewrite it triggers removes the marker it keys off.
@@ -28,7 +47,8 @@ namespace Deathlink.Common {
                 // behaved. The framework writes the bytes the server sent rather than re-serializing,
                 // which is what stops a round trip through the object model quietly dropping settings.
                 ClientWritesToDisk = true,
-                // The validator resolves prefab names, which do not exist yet during Awake.
+                // The validator resolves prefab names, which do not exist yet during Awake. This is what
+                // RevalidatePrefabDependent picks the file out by when the deferred pass runs.
                 NeedsPrefabs = true,
             });
 
@@ -42,9 +62,21 @@ namespace Deathlink.Common {
                 Watch = false,
             });
 
-            // Prefab names cannot be checked during Awake, and DefaultDeathChoice is a BepInEx setting
-            // the validator cross-checks against this file, so both re-run validation when they settle.
-            PrefabManager.OnPrefabsRegistered += () => RevalidateAll();
+            // Prefab names cannot be checked during Awake, so the startup pass skips them and this arms
+            // the deferred half. OnPrefabsRegistered is a ZNetScene.Awake postfix, so a new scene means a
+            // new prefab table and any previous verdict is stale.
+            //
+            // It only RUNS the pass headless. On a client the check belongs on the player path -- loading
+            // or picking a choice -- which is where the levels first get used and where ObjectDB is
+            // guaranteed to be up as well. A dedicated server never sets Player.m_localPlayer, so nothing
+            // would ever reach EnsurePrefabsValidated there and an admin would see no warnings at all.
+            PrefabManager.OnPrefabsRegistered += () => {
+                DeathConfigurationData.ArmPrefabValidation();
+                if (GUIManager.IsHeadless()) { DeathConfigurationData.EnsurePrefabsValidated(); }
+            };
+
+            // DefaultDeathChoice is a BepInEx setting the validator cross-checks against this file, so
+            // re-run validation when it settles. Not prefab-related, hence the full pass.
             if (ValConfig.DefaultDeathChoice != null) {
                 ValConfig.DefaultDeathChoice.SettingChanged += (sender, args) => RevalidateAll();
             }

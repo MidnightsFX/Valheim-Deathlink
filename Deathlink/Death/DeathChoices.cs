@@ -106,6 +106,23 @@ namespace Deathlink.Death
                 GUIManager.BlockInput(false);
             }
 
+            // Repopulate from whatever DeathConfigurationData.DeathLevels now holds.
+            //
+            // Without this the selection list is only ever built at Awake and on Show, so after a hand
+            // edit, a server broadcast or an in-game edit the panel can still be offering levels that no
+            // longer exist. Called from the config file's Apply hook, which covers all three routes.
+            internal void RebuildChoiceList() {
+                if (ChoicesContent == null) { return; }
+                SetChoiceList();
+            }
+
+            // No-op when the panel has never been built, so this never forces the singleton into
+            // existence just to refresh something nobody has looked at.
+            internal static void RefreshIfBuilt() {
+                if (IsInitialized == false) { return; }
+                Instance.RebuildChoiceList();
+            }
+
             public void MakePlayerDeathSelection() {
                 if (Player.m_localPlayer == null) {
                     Logger.LogWarning("Player not set, ensure the local player is set.");

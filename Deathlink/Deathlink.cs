@@ -71,6 +71,9 @@ namespace Deathlink
             // Yaml configs. After ValConfig (which owns cfgFolder and the poll/apply intervals) and after
             // Harmony, so a validator can see anything a patch registered. See Common/Config.
             YamlConfigManager.Init();
+            // The in-game death choice editor, reached from the shared config launcher. After
+            // YamlConfigManager, because it edits a registered file.
+            DeathChoiceEditor.Init();
             LeaderboardData.Init();
             StartCoroutine(LeaderboardData.SyncLoop());
             TerminalCommands.AddCommands();

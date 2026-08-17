@@ -1,8 +1,20 @@
   **0.11.0**
 ---
 ```
-Death choice configuration is much harder to break, and two settings that were documented but did
-nothing now work. Existing DeathChoices.yaml files load unchanged.
+Death choices can now be edited in game, configuration is much harder to break, and two settings that
+were documented but did nothing now work. Existing DeathChoices.yaml files load unchanged.
+
+In-game editor
+- New "Mod Config" button at the bottom right of the main menu and the pause menu opens a death choice
+  editor: edit every setting of every level, add levels, copy them, rename them and delete them,
+  including the resource, skill and loot modifier tables and their prefab lists.
+- The button is shared with any other mod that supports it, so several mods do not each add their own.
+  If more than one is installed, clicking it lets you pick which mod to configure.
+- Only shown to the host or a server admin. A server admin playing on a dedicated server can edit and
+  send changes to the server, which checks them before accepting and then pushes them to everyone.
+- Nothing is saved until you press Apply, and a change that fails its checks leaves the panel open with
+  your edits intact rather than half-saving.
+- Renaming a level warns you first: players store the level name on their character.
 
 Configuration
 - DeathChoices.yaml is now written with full documentation of every setting at the top of the file.

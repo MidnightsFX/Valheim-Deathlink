@@ -1,11 +1,5 @@
 # YAML configuration framework
 
-> **This folder is a copy of `Common/Config/` from JotunnTemplatePlugin.** Keep it textually close to the
-> original so the two can still be diffed against each other — only the namespace and the plugin name
-> references differ. Deathlink's own registrations live in `Common/DeathlinkConfigFiles.cs`, not in the
-> `Examples/` file referenced below, which was deleted on copy.
-
-
 Structured configuration in files an admin can actually read and edit, alongside BepInEx's flat
 `ConfigEntry` values. Each file is one declaration: the framework owns the path, the default file, the
 documented header, hot-reload, validation, failure policy, and server→client sync.
@@ -95,9 +89,26 @@ The design goal is that a mistake costs one setting, never the file.
 anyway; errors route to `OnFailure`. Put "this prefab does not exist" in warnings and "there are no
 entries at all" in errors.
 
-Validators that look up prefabs must set `NeedsPrefabs` and the mod must call
-`YamlConfigManager.RevalidateAll()` from `PrefabManager.OnPrefabsRegistered` — the prefab table does not
-exist during `Awake`, so validating there would warn about every name in the file.
+### Validators that resolve prefab names
+
+The prefab table does not exist during `Awake`, where files are first loaded, so a validator that looks
+up prefabs would warn about every name in the file. Such a validator must:
+
+1. Set `NeedsPrefabs` on the file. `YamlConfigManager.RevalidatePrefabDependent()` picks files out by it.
+2. Gate every lookup on a real readiness check and simply skip the check when it fails, so the startup
+   pass is silent rather than wrong.
+3. Be driven from first use, once the game can answer — `RevalidatePrefabDependent()` re-runs the
+   validator against the values already loaded and refreshes `LastReport`.
+
+**`PrefabManager.Instance` cannot be used as the readiness check.** Jotunn declares it as
+`_instance ??= new PrefabManager()`, so reading the property constructs it and a null guard on it never
+trips. Use `Utils.PrefabsAvailable()` (`ZNetScene.instance.m_namedPrefabs` is populated) instead.
+
+Deathlink drives this from the player path: `DeathConfigurationData.EnsurePrefabsValidated()` is called
+from `CheckAndSetPlayerDeathConfig`, which every route to a resolved death choice funnels through, and is
+a no-op once the pass has run. `PrefabManager.OnPrefabsRegistered` re-arms it — a new `ZNetScene` means a
+new prefab table — and runs it directly only when `GUIManager.IsHeadless()`, because a dedicated server
+has no local player to trigger the lazy path.
 
 ## Server sync
 
@@ -105,9 +116,22 @@ A `ServerAuthoritative` file gets a Jotunn `CustomRPC` and an initial-sync provi
 sends the file's text; on a server-side edit the watcher reloads and broadcasts it. Clients apply it in
 memory, and additionally write it to disk if `ClientWritesToDisk` is set.
 
-Client uploads are **rejected**, not admin-gated. Jotunn's `IsAdminOnly` covers `ConfigEntry` values
-only — a `CustomRPC` has no protection of its own and any peer can craft the package. If you want an
-upload channel, write the handler yourself and gate it on `ConfigNetwork.SenderIsAdmin`.
+Client uploads on the main channel are **always rejected**. Jotunn's `IsAdminOnly` covers `ConfigEntry`
+values only — a `CustomRPC` has no protection of its own and any peer can craft the package.
+
+A file may opt into a separate, admin-gated upload channel with `AllowAdminEdit = true`. That registers a
+second RPC (`<RpcName>_Edit`) on which a connected admin can send a replacement. The server checks
+`SenderIsAdmin`, runs `DryRun` to validate **without applying**, and only then applies, writes and
+re-broadcasts; a refusal goes back to the sender with the reason. Leave it off for save data.
+
+Everything an editor changes goes through `YamlConfigManager.ApplyEdited(file, yaml, out message)` —
+validate, apply, write with the header, broadcast. Note the broadcast there is explicit and has to be:
+writing through the manager re-stamps the watcher, so the watcher-driven broadcast will *not* fire for
+your own write.
+
+Use `DryRun` rather than `LoadFrom` for anything that asks "would this be accepted?". `LoadFrom` routes
+failure through `OnFailure`, so on a `RestoreFileOnDisk` file a rejected candidate would overwrite the
+owner's good file with defaults.
 
 `ConfigNetwork.ServerConfigsSynced` tells you whether this client has received the server's values yet.
 It is reset on world unload, so a second join in the same session waits properly instead of drawing from

@@ -90,6 +90,58 @@ namespace Deathlink.Common {
             }
         }
 
+        // The single apply path for every editor-driven change, whether it came from a panel on this
+        // machine or from an admin's upload. Returns false with a human-readable reason on refusal.
+        //
+        // Yaml text is the unit of exchange rather than a live object, deliberately. Text is the one
+        // representation that is identical on disk, on the wire and after validation; an object overload
+        // would need a second validation path and would hand Value an object the editor still holds a
+        // reference to, which is exactly how a mod ends up serving edited-but-stale cached values.
+        internal static bool ApplyEdited(YamlConfigFile file, string yaml, out string message) {
+            message = "";
+            if (file == null) { message = "no config file was named"; return false; }
+
+            // Only the machine that owns the file may take this path. A client's editor goes through
+            // ConfigNetwork.RequestEdit and the SERVER ends up here instead.
+            if (ZNet.instance != null && ZNet.instance.IsServer() == false) {
+                message = $"{file.FileName} belongs to the server; changes have to be sent to it.";
+                return false;
+            }
+
+            ValidationReport report = file.DryRun(yaml, out string parseError);
+            if (parseError != null) {
+                message = $"{file.FileName} was rejected because {parseError}.";
+                return false;
+            }
+            if (report.HasErrors) {
+                message = string.Join(" ", report.Errors.ToArray());
+                return false;
+            }
+
+            if (file.LoadFrom(yaml, ConfigOrigin.Api) == false) {
+                message = file.LastError ?? $"{file.FileName} could not be applied.";
+                return false;
+            }
+
+            // The exact bytes that were validated, so what is on disk is what was judged -- and the
+            // documented header survives, because this goes through WriteRawToDisk.
+            WriteRawToDisk(file, yaml);
+
+            // Explicit, and required: WriteRawToDisk re-stamps the watcher so it will not see our own
+            // write, which means the watcher-driven broadcast never fires for this path.
+            ConfigNetwork.Broadcast(file);
+
+            message = report.Warnings.Count == 0 ? "" : string.Join(" ", report.Warnings.ToArray());
+            return true;
+        }
+
+        // So an editor cannot pick its own serializer and hand back a document the framework would never
+        // have written itself.
+        internal static string SerializeForEdit<T>(YamlConfigFile<T> file, T value) where T : class {
+            if (file == null || value == null) { return ""; }
+            return file.EffectiveFormat.Serializer.Serialize(value);
+        }
+
         internal static void RestoreDefaults(YamlConfigFile file) {
             WriteRawToDisk(file, file?.SerializeDefaults());
         }
@@ -125,6 +177,20 @@ namespace Deathlink.Common {
         // BepInEx entry a validator cross-checks has changed.
         internal static void RevalidateAll() {
             for (int i = 0; i < Files.Count; i++) {
+                try {
+                    Files[i].Revalidate();
+                } catch (Exception e) {
+                    Logger.LogError($"Revalidating {Files[i].FileName} threw: {e.Message}");
+                }
+            }
+        }
+
+        // Re-run only the validators that resolve prefab names, which is what NeedsPrefabs marks. Kept
+        // separate from RevalidateAll so the deferred prefab pass -- which fires off a player load -- does
+        // not re-log every unrelated file's report as a side effect.
+        internal static void RevalidatePrefabDependent() {
+            for (int i = 0; i < Files.Count; i++) {
+                if (Files[i].NeedsPrefabs == false) { continue; }
                 try {
                     Files[i].Revalidate();
                 } catch (Exception e) {

@@ -37,6 +37,7 @@ public class ValConfig
 
     public static ConfigEntry<float> ConfigApplyDelay;
     public static ConfigEntry<float> ConfigPollIntervalSeconds;
+    public static ConfigEntry<bool> ShowQuickConfigButton;
 
     // Read by Common/Config. Derived from the plugin so it cannot drift from the mod's name.
     internal static readonly string cfgFolder = Deathlink.PluginName;
@@ -118,6 +119,14 @@ public class ValConfig
         // noticed; the apply delay coalesces the two writes most editors make when saving one file.
         ConfigPollIntervalSeconds = BindServerConfig("Config", "Config Poll Interval", 30f, "Seconds between checks for edits to this mod's yaml config files and its BepInEx config file. Lower reacts faster to a hand edit, higher does less disk work.", true, 1f, 300f);
         ConfigApplyDelay = BindServerConfig("Config", "Config Apply Delay", 1f, "Delay in seconds before a changed config file is applied in-game. Coalesces a burst of rapid edits into a single apply. Set to 0 to apply instantly.", true, 0f, 10f);
+
+        // Per-machine UI preference, so a plain client bind rather than BindServerConfig: this decides
+        // whether Deathlink appears in the shared config launcher, not how the game plays.
+        ShowQuickConfigButton = Config.Bind("Client config", "ShowQuickConfigButton", true,
+            new ConfigDescription("Show Deathlink in the shared in-game config launcher (bottom right of the main and pause menus).",
+            null,
+            new ConfigurationManagerAttributes { }));
+        ShowQuickConfigButton.SettingChanged += (sender, args) => Death.DeathChoiceEditor.ApplyRegistration();
 
         // Debugmode
         EnableDebugMode = Config.Bind("Client config", "EnableDebugMode", false,

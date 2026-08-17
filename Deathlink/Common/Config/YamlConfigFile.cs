@@ -53,11 +53,18 @@ namespace Deathlink.Common {
         internal bool NeedsPrefabs { get; set; }
         // 0 means unversioned. When set, GetSchemaVersion must also be supplied.
         internal int SchemaVersion { get; set; }
+        // Whether a connected admin may upload a replacement for this file. Opt-in, and default false on
+        // purpose: copying this folder into a mod must never silently open a write channel into its
+        // config. Save-data files should always leave this off.
+        internal bool AllowAdminEdit { get; set; }
 
         // --- Owned by the framework ---
 
         internal string Path { get; set; }
         internal CustomRPC Rpc { get; set; }
+        // Only created when AllowAdminEdit is set. Carries admin uploads up and the accept/refuse answer
+        // back down.
+        internal CustomRPC EditRpc { get; set; }
         internal bool LastLoadFailed { get; set; }
         internal string LastError { get; set; }
         internal DateTime LastLoadedUtc { get; set; }
@@ -72,6 +79,17 @@ namespace Deathlink.Common {
         internal abstract string SerializeCurrent();
         internal abstract bool LoadFrom(string yaml, ConfigOrigin origin);
         internal abstract ValidationReport Revalidate();
+
+        // Parse and validate some candidate yaml WITHOUT applying any of it: nothing is assigned, nothing
+        // is published, nothing is written, and none of the Last* fields move.
+        //
+        // This exists because LoadFrom cannot be used to test a candidate. LoadFrom routes failure through
+        // OnFailure, so on a file registered RestoreFileOnDisk a REJECTED upload would overwrite the
+        // owner's perfectly good file with defaults. Anything that needs to ask "would this be accepted?"
+        // -- an admin upload, an editor's Validate button -- has to come through here.
+        //
+        // parseError is null when the document parsed; the returned report then carries the verdict.
+        internal abstract ValidationReport DryRun(string yaml, out string parseError);
     }
 
     internal sealed class YamlConfigFile<T> : YamlConfigFile where T : class {
@@ -116,6 +134,39 @@ namespace Deathlink.Common {
 
         internal override string SerializeCurrent() {
             return Value == null ? SerializeDefaults() : EffectiveFormat.Serializer.Serialize(Value);
+        }
+
+        internal override ValidationReport DryRun(string yaml, out string parseError) {
+            parseError = null;
+
+            if (YamlConfigManager.HasNoUsableConfig(yaml)) {
+                parseError = "it is empty or contains only comments";
+                return new ValidationReport();
+            }
+
+            T parsed = Deserialize(yaml, out string reason);
+            if (parsed == null) {
+                parseError = reason ?? "it could not be parsed";
+                return new ValidationReport();
+            }
+
+            // Run the same in-place migration a real load would, so the candidate is judged in the shape
+            // it would actually end up in. Safe: this is a throwaway object.
+            if (MigrateInPlace != null) {
+                try {
+                    MigrateInPlace(parsed);
+                } catch (Exception e) {
+                    Logger.LogWarning($"{FileName} migration threw during a dry run: {e.Message}");
+                }
+            }
+
+            if (Validate == null) { return new ValidationReport(); }
+
+            try {
+                return Validate(parsed, Value) ?? new ValidationReport();
+            } catch (Exception e) {
+                return new ValidationReport().Error($"the validator threw: {e.Message}");
+            }
         }
 
         internal override ValidationReport Revalidate() {

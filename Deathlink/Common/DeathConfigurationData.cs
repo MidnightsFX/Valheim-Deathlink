@@ -149,7 +149,54 @@ namespace Deathlink.Common
             }
         }
 
+        // Armed at startup and re-armed whenever the levels or the prefab table are replaced.
+        private static bool prefabValidationPending = true;
+
+        /// <summary>
+        /// The deferred half of DeathChoices.yaml validation. Prefab names cannot be resolved during
+        /// Awake -- ZNetScene does not exist yet -- so the startup pass deliberately skips them and this
+        /// runs the check the first time the levels are actually used: when a player loads their
+        /// character or picks a Deathlink choice. Cheap to call repeatedly; it does nothing once the
+        /// check has run, and nothing yet if the prefab table still is not up.
+        /// </summary>
+        internal static void EnsurePrefabsValidated() {
+            if (prefabValidationPending == false) { return; }
+            // Not ready yet. Stays armed, so the next player load or choice retries it.
+            if (Utils.PrefabsAvailable() == false) { return; }
+
+            // Cleared before the pass, not after, so a re-entrant call cannot start a second one.
+            prefabValidationPending = false;
+            YamlConfigManager.RevalidatePrefabDependent();
+        }
+
+        /// <summary>
+        /// Re-arms the deferred prefab check unconditionally. For a new ZNetScene: the prefab table it
+        /// brings is a different one, so whatever was checked against the last table has to be redone.
+        /// </summary>
+        internal static void ArmPrefabValidation() {
+            prefabValidationPending = true;
+        }
+
+        /// <summary>
+        /// Re-arms the deferred check only when the load that just happened could not check prefab names
+        /// for itself -- the startup load, or the server's copy arriving during connect, both of which
+        /// run before ZNetScene exists.
+        ///
+        /// An in-world reload (hand edit, broadcast, in-game edit) validated prefab names for real inside
+        /// LoadFrom and has already logged the result, so arming there would only make the next player
+        /// load repeat the same report.
+        /// </summary>
+        internal static void ArmPrefabValidationIfUnchecked() {
+            if (Utils.PrefabsAvailable()) { return; }
+            prefabValidationPending = true;
+        }
+
         public static void CheckAndSetPlayerDeathConfig(Player player) {
+            // The lazy prefab pass. This method is the one point every way of arriving at a resolved
+            // death choice funnels through -- the Player.Load postfix, the selection popup, an admin
+            // reset and the config apply hook -- so hanging the check here covers all of them once.
+            EnsurePrefabsValidated();
+
             if (ValConfig.UsePrivateKeysForDeathChoice.Value) {
                 Logger.LogDebug($"Checking private keys configurations for Deathlink");
                 if (!player.PlayerHasUniqueKey(DeathChoiceKey)) {
@@ -511,11 +558,12 @@ namespace Deathlink.Common
             }
         }
 
-        // Silent until the prefab table exists. DeathChoices.yaml is registered with NeedsPrefabs, and
-        // Deathlink re-runs validation from PrefabManager.OnPrefabsRegistered -- without this guard the
-        // startup load would warn about every prefab name in the file.
+        // Silent until the prefab table exists. The startup load runs from Awake, long before ZNetScene
+        // and ObjectDB, so every name in the file would come back unresolved; EnsurePrefabsValidated
+        // re-runs this pass once the game can actually answer. See Utils.PrefabsAvailable for why the
+        // obvious `PrefabManager.Instance == null` test does not work.
         private static void WarnIfUnknownPrefab(string levelKey, string where, string prefab, ValidationReport report) {
-            if (PrefabManager.Instance == null) { return; }
+            if (Utils.PrefabsAvailable() == false) { return; }
             if (PrefabManager.Instance.GetPrefab(prefab) != null) { return; }
             report.Warn($"level '{levelKey}' {where} names prefab '{prefab}', which does not exist. It will be skipped.");
         }
