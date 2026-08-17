@@ -1,7 +1,7 @@
 #!/bin/bash
 
-DLL=ValRougelike/bin/Release/ValRougelike.dll
-PLUGINS=ValRougelike/Package/plugins
+DLL=Deathlink/bin/Release/Deathlink.dll
+PLUGINS=Deathlink/Package/plugins
 README=README.md
 #TRANSLATIONS=Translations
 
@@ -34,7 +34,7 @@ cp -f "$DLL" "$PLUGINS" || { echo "Error: Failed to copy $DLL"; exit 1; }
 cp -f "$README" "$PLUGINS/../README.md" || { echo "Error: Failed to copy $README"; exit 1; }
 #cp -rf "$TRANSLATIONS" "$PLUGINS/"  || { echo "Error: Failed to copy Translations"; exit 1; }
 
-ZIPDESTINATION="../bin/Release/ValRougelike.$VERSION.zip"
+ZIPDESTINATION="../bin/Release/Deathlink.$VERSION.zip"
 
 cd "$PLUGINS/.."
 if [ ! -z "$VERSION" ]; then

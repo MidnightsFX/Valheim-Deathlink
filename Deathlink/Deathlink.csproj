@@ -1,0 +1,266 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Per-machine overrides: VALHEIM_INSTALL, ModTools, ... Gitignored, and absent
+       on a fresh clone; imported here only if someone creates one.
+
+       JotunnLib's build/Paths.props tries to import it too, but only via
+       $(SolutionDir), which is empty whenever the .csproj is built directly
+       rather than through Deathlink.sln. Its other attempt,
+       $(MSBuildThisFileDirectory)../../Environment.props, was written for the
+       packages.config layout; under PackageReference that resolves inside
+       %USERPROFILE%\.nuget\packages\ and never finds anything. Importing it here
+       makes the documented mechanism work under msbuild, dotnet build and
+       Visual Studio alike.
+
+       RepoRoot repeats the expression the mod-tools block sets at the bottom of
+       this file. Import conditions are evaluated in document order, so it has to
+       exist before the Import; both are guarded on empty and produce the same
+       path. Keep the two in sync if `mod-tools setup` ever changes it. -->
+  <PropertyGroup>
+    <RepoRoot Condition=" '$(RepoRoot)' == '' ">$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/../'))</RepoRoot>
+  </PropertyGroup>
+  <Import Project="$(RepoRoot)Environment.props" Condition="Exists('$(RepoRoot)Environment.props')" />
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>Library</OutputType>
+    <AssemblyName>Deathlink</AssemblyName>
+    <RootNamespace>Deathlink</RootNamespace>
+    <!-- Not required by the SDK, but Deathlink.sln and the Rider .DotSettings.user
+         file both identify this project by GUID. -->
+    <ProjectGuid>{DEAF4438-8089-40ED-8175-398E1261D45B}</ProjectGuid>
+
+    <!-- The SDK defaults C# to 7.3 on .NET Framework targets. This code needs 10. -->
+    <LangVersion>10</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+
+    <!-- Properties\AssemblyInfo.cs is kept and hand-maintained. Without this the
+         SDK generates the same attributes into obj\ and every one of them
+         collides with it (CS0579). -->
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+
+    <!-- A BepInEx plugin is loaded by Unity's Mono, never through the CLR's
+         app.config machinery, so binding redirects and the Deathlink.dll.config
+         they get written into are dead weight. app.config has been deleted;
+         these stop anything regenerating that file. -->
+    <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
+    <GenerateBindingRedirectsOutputType>false</GenerateBindingRedirectsOutputType>
+
+    <!-- The SDK's default None glob is **/*, which would otherwise sweep in the
+         release zips under Releases\ and the staged plugin under Package\plugins\.
+         None items have no build action, so this is mostly evaluation cost and
+         Solution Explorer clutter - but it also means a stray .cs dropped in
+         either place would start getting compiled. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);Releases\**;Package\plugins\**</DefaultItemExcludes>
+
+    <!-- The Jotunn publicizer. build/JotunnLib.props gates JotunnBuildTaskRunner
+         on a *target* condition, evaluated at build time, so setting the property
+         here works even though Paths.props only reads it in an import condition.
+         Replaces the two contradictory DoPrebuild.props files, whose winner
+         depended entirely on which .sln you happened to open.
+
+         JotunnBuildTask.dll targets .NETFramework 4.6.2, so the publicizer is
+         restricted to full-framework MSBuild; `dotnet build` compiles against
+         whatever publicized_assemblies are already on disk, which is what you
+         want for a quick syntax check. After a Valheim update, build once with
+         msbuild - or pass -p:ExecutePrebuild=true explicitly. -->
+    <ExecutePrebuild Condition=" '$(ExecutePrebuild)' == '' AND '$(MSBuildRuntimeType)' == 'Full' ">true</ExecutePrebuild>
+    <ExecutePrebuild Condition=" '$(ExecutePrebuild)' == '' ">false</ExecutePrebuild>
+  </PropertyGroup>
+
+  <!-- The SDK defaults DebugType to portable for every target framework,
+       including net48. pdb2mdb.exe reads Windows PDBs only, so a portable PDB
+       would silently produce a useless .mdb - which GenerateMdb below, then
+       CopyToUnity and ModToolsDeploy, would all go on to propagate. Both
+       configurations are spelled out to reproduce what the legacy project emitted. -->
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
+    <DebugType>full</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+    <DebugType>pdbonly</DebugType>
+    <!-- The SDK defaults this to false outside Debug, which would suppress the
+         Release PDB the legacy project produced. -->
+    <DebugSymbols>true</DebugSymbols>
+  </PropertyGroup>
+
+  <!-- Visual Studio F5 target. -->
+  <PropertyGroup Condition="'$(OS)' == 'Windows_NT'">
+    <StartAction>Program</StartAction>
+    <StartProgram>$(VALHEIM_INSTALL)\valheim.exe</StartProgram>
+    <StartArguments>-console</StartArguments>
+    <StartWorkingDirectory>$(VALHEIM_INSTALL)</StartWorkingDirectory>
+  </PropertyGroup>
+
+  <!-- Jotunn 2.29.2 rewrote every HintPath in JotunnLibRefsCorlib.props to be
+       $(VALHEIM_MANAGED)-relative and derives that property in Paths.props - from
+       the VALHEIM_INSTALL it resolved from the registry, before Environment.props
+       above had a chance to override it. Resolving again from the final
+       VALHEIM_INSTALL keeps one source of truth, and reaches those ~80 references
+       even though an earlier import declared them: MSBuild evaluates every
+       property outside a target before any item.
+
+       Same probe order as Paths.props - Valheim_Data, then valheim_Data. Only
+       assigned when one of them resolves, so a machine where neither exists keeps
+       whatever Paths.props worked out. -->
+  <PropertyGroup Condition=" '$(VALHEIM_INSTALL)' != '' ">
+    <_ValheimManagedResolved Condition="Exists('$(VALHEIM_INSTALL)/Valheim_Data/Managed')">$(VALHEIM_INSTALL)/Valheim_Data/Managed</_ValheimManagedResolved>
+    <_ValheimManagedResolved Condition=" '$(_ValheimManagedResolved)' == '' AND Exists('$(VALHEIM_INSTALL)/valheim_Data/Managed')">$(VALHEIM_INSTALL)/valheim_Data/Managed</_ValheimManagedResolved>
+    <VALHEIM_MANAGED Condition=" '$(_ValheimManagedResolved)' != '' ">$(_ValheimManagedResolved)</VALHEIM_MANAGED>
+  </PropertyGroup>
+  <PropertyGroup>
+    <!-- Was $(SolutionDir)JotunnModUnity, which is why CopyToUnity could never
+         have worked from a direct .csproj build. -->
+    <UNITY_FOLDER>$(RepoRoot)JotunnModUnity</UNITY_FOLDER>
+  </PropertyGroup>
+
+  <!-- Include and Version as attributes on one tag: mod-tools' deps.rb matches
+       PackageReference with a regex that requires exactly that, and it is what
+       lets `mod-tools check` compare these against the Thunderstore pins in
+       Package\manifest.json. Central package management would hide the version
+       from it.
+
+       JotunnLib 2.29.2 matches the manifest exactly. YamlDotNet stays at 16.3.0
+       against a manifest declaring 16.3.1 - a manifest newer than the
+       compiled-against version is allowed and reported as a NOTE; older is the
+       failure case. -->
+  <ItemGroup>
+    <PackageReference Include="JotunnLib" Version="2.29.2" />
+    <PackageReference Include="YamlDotNet" Version="16.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Everything else - ~80 Unity, BepInEx and publicized game assemblies -
+         comes from build/JotunnLibRefsCorlib.props inside the JotunnLib package,
+         which NuGet imports automatically via obj\Deathlink.csproj.nuget.g.props.
+         That file only exists after a restore, so a command-line msbuild has to
+         pass -restore on the first build.
+
+         Dropped from the legacy reference list, deliberately:
+           AzuExtendedPlayerInventoryAPI - external\AzuExtendedPlayerInventoryAPI.dll
+             does not exist, and is redundant anyway: AzuExtendedPlayerInventory.API
+             and .SlotInfo compile from external\AzuExtendedInventoryAPI\*.cs.
+           Jotunn, YamlDotNet - now PackageReference.
+           Splatform_publicized - its assembly identity is plain "Splatform", which
+             collides with the Splatform reference 2.29.2 now supplies (MSB3277, with
+             an arbitrary winner). No source file uses a Splatform type; it only ever
+             existed to satisfy CS0012 on assembly_valheim signatures, which the
+             package's own reference now covers. Takes a seven-deep ..\..\ HintPath
+             with it.
+           System, System.Core, System.Data, System.Xml, System.Xml.Linq - implicit.
+
+         These two are not in the SDK's implicit .NETFramework reference set. -->
+    <Reference Include="Microsoft.CSharp" />
+    <Reference Include="System.Data.DataSetExtensions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The default EmbeddedResource glob is **/*.resx, so both of these have to
+         be named explicitly or they vanish from the assembly. None Remove is what
+         Visual Studio itself writes when you set Build Action = Embedded Resource
+         in an SDK project: the default None glob would otherwise claim them too.
+
+         LogicalName is not cosmetic. Deathlink.cs asks for
+         "Deathlink.AssetsEmbedded.deathless" by that literal string, and
+         AddLocalizations() splits each localization resource name on '.' and takes
+         index 2, so "Deathlink.Localizations.English.json" has to keep its exact
+         four-segment shape. Pinning both makes the names independent of
+         RootNamespace, of directory layout, and of any future change to the SDK's
+         resource-naming convention. -->
+    <None Remove="AssetsEmbedded\deathless" />
+    <None Remove="Localizations\English.json" />
+    <EmbeddedResource Include="AssetsEmbedded\deathless" LogicalName="Deathlink.AssetsEmbedded.deathless" />
+    <EmbeddedResource Include="Localizations\English.json" LogicalName="Deathlink.Localizations.English.json" />
+  </ItemGroup>
+
+  <!-- Restores the .mdb generation that was lost when publish.ps1 stopped being
+       invoked. Project-specific, so outside the managed markers, and declared
+       before them because ModToolsDeploy copies the .mdb this writes. See
+       mod-tools SETUP.md section 4. -->
+  <Target Name="GenerateMdb" AfterTargets="Build" Condition=" '$(OS)' == 'Windows_NT' AND '$(Configuration)' == 'Debug' AND Exists('$(TargetDir)$(TargetName).pdb') ">
+    <Exec Command="&quot;$(RepoRoot)libraries\Debug\pdb2mdb.exe&quot; &quot;$(TargetDir)$(TargetFileName)&quot;" />
+  </Target>
+
+  <!-- Refreshes the companion Unity project's assembly stubs. Dead code until now:
+       its only caller, JotunnPostBuildTaskWin, was deleted, and the BuildDependsOn
+       override left behind was an empty no-op.
+
+       Declared after GenerateMdb - targets sharing an AfterTargets hook run in
+       declaration order, and this copies the .mdb that one writes. The per-file
+       Exists condition means a Release build (no .mdb) or a BepInEx install
+       missing MonoMod.RuntimeDetour.dll degrades to a skipped file rather than a
+       hard Copy failure. -->
+  <Target Name="CopyToUnity" AfterTargets="Build" Condition="Exists('$(UNITY_FOLDER)')">
+    <Message Text="Copy To Unity: $(UNITY_FOLDER)" Importance="high" />
+    <ItemGroup>
+      <_UnityAssembly Include="$(BEPINEX_PATH)\core\BepInEx.dll" />
+      <_UnityAssembly Include="$(BEPINEX_PATH)\core\0Harmony.dll" />
+      <_UnityAssembly Include="$(BEPINEX_PATH)\core\Mono.Cecil.dll" />
+      <_UnityAssembly Include="$(BEPINEX_PATH)\core\MonoMod.Utils.dll" />
+      <_UnityAssembly Include="$(BEPINEX_PATH)\core\MonoMod.RuntimeDetour.dll" />
+      <_UnityAssembly Include="$(TargetDir)Jotunn.dll" />
+      <_UnityAssembly Include="$(TargetDir)$(TargetName).dll" />
+      <_UnityAssembly Include="$(TargetDir)$(TargetName).pdb" />
+      <_UnityAssembly Include="$(TargetDir)$(TargetName).dll.mdb" />
+      <_UnityAssembly Include="$(VALHEIM_MANAGED)\assembly_valheim.dll" />
+      <_UnityAssembly Include="$(VALHEIM_MANAGED)\assembly_utils.dll" />
+      <_UnityAssembly Include="$(VALHEIM_MANAGED)\assembly_postprocessing.dll" />
+      <_UnityAssembly Include="$(VALHEIM_MANAGED)\assembly_sunshafts.dll" />
+      <_UnityAssembly Include="$(VALHEIM_MANAGED)\assembly_guiutils.dll" />
+      <_UnityAssembly Include="$(VALHEIM_MANAGED)\assembly_googleanalytics.dll" />
+      <_UnityAssembly Include="$(VALHEIM_MANAGED)\PlayFab.dll" />
+      <_UnityAssembly Include="$(VALHEIM_MANAGED)\PlayFabParty.dll" />
+      <_UnityAssembly Include="$(VALHEIM_MANAGED)\gui_framework.dll" />
+      <_UnityAssembly Include="$(VALHEIM_MANAGED)\com.rlabrecque.steamworks.net.dll" />
+      <_UnityAssembly Include="$(VALHEIM_MANAGED)\SoftReferenceableAssets.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_UnityAssembly)"
+          DestinationFolder="$(UNITY_FOLDER)\Assets\Assemblies"
+          SkipUnchangedFiles="true"
+          Condition="Exists('%(_UnityAssembly.Identity)')" />
+  </Target>
+
+  <!-- BEGIN mod-tools (managed block; replaced by `mod-tools setup`) -->
+  <PropertyGroup>
+    <RepoRoot Condition=" '$(RepoRoot)' == '' ">$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/../'))</RepoRoot>
+    <!-- Override in the gitignored Environment.props when the gem's bindir
+         is not on the PATH that MSBuild sees. -->
+    <ModTools Condition=" '$(ModTools)' == '' ">mod-tools</ModTools>
+  </PropertyGroup>
+
+  <!-- Nothing is vendored into this repo, so a machine that never installed
+       the tools has no mod-tools at all. This probes for it once and warns,
+       rather than failing: not having a release tool should not stop anyone
+       compiling. Everything below is then conditioned on the result, so a
+       machine without it skips those steps instead of failing three times
+       over with "command not found" buried in Exec output. -->
+  <Target Name="ModToolsGuard" BeforeTargets="Build">
+    <Exec Command="$(ModTools) preflight --root &quot;$(RepoRoot).&quot;" ContinueOnError="true" IgnoreExitCode="true" StandardOutputImportance="low">
+      <Output TaskParameter="ExitCode" PropertyName="ModToolsExit" />
+    </Exec>
+    <PropertyGroup>
+      <ModToolsAvailable Condition=" '$(ModToolsExit)' == '0' ">true</ModToolsAvailable>
+    </PropertyGroup>
+    <Warning Condition=" '$(ModToolsAvailable)' != 'true' " Text="mod-tools is not installed on this machine, or this repo is not set up. Skipping release checks, packaging and deploy. Install it with `rake install` from a clone of the tools repo; see its SETUP.md." />
+  </Target>
+
+  <Target Name="ReleaseChecks" BeforeTargets="Build" Condition=" '$(ModToolsAvailable)' == 'true' AND '$(Configuration)' == 'Release' ">
+    <Exec Command="$(ModTools) check --root &quot;$(RepoRoot).&quot;" />
+  </Target>
+
+  <Target Name="ReleasePackage" AfterTargets="Build" Condition=" '$(ModToolsAvailable)' == 'true' AND '$(Configuration)' == 'Release' ">
+    <Exec Command="$(ModTools) package --root &quot;$(RepoRoot).&quot;" />
+  </Target>
+
+  <!-- No Configuration condition, unlike the two above: every build lands
+       in the test profiles, Debug and Release alike. Declared last so it
+       runs after a GenerateMdb target defined earlier in this file, whose
+       .mdb it copies. Does nothing unless release.yml enables deploy. -->
+  <Target Name="ModToolsDeploy" AfterTargets="Build" Condition=" '$(ModToolsAvailable)' == 'true' ">
+    <Exec Command="$(ModTools) deploy --root &quot;$(RepoRoot).&quot; --configuration $(Configuration)" />
+  </Target>
+  <!-- END mod-tools -->
+</Project>
