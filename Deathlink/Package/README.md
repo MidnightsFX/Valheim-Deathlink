@@ -1,12 +1,10 @@
-# Deathlink - Rougelike Control
-Progression and Choice based death control.
+# Deathlink - Configureable Death & Difficulty
 
-Bringing together players from many different experiance levels often means that some players struggle while others are bored.
+Deathlink provides the ability to completely configure role specific difficulty, bonuses, penalties and death experience.
+In addition to extensive configuration, death penalties and bonuses can be scaled by progression.
+
+Bringing together players from many different experience levels often means that some players struggle while others are bored.
 Deathlink provides a way to challenge and reward players based on their appetite for risk.
-
-Additionally, death is one of the few things that does not progress through the game. 
-Deathlink changes that by providing a skill that levels up faster the longer you stay alive,
-and scales your death changes based on that skill.
 
 
 ## Example Deathlink Choices
@@ -17,6 +15,8 @@ and scales your death changes based on that skill.
 
 ## Configuration
 Deathlink has extensive yaml based configuration options. However it can be used with the default configuration.
+
+A visual configuration UI is also available (to admins), allowing complete editing of death choices.
 
 Each of these configuration sections below can be applied to any number of profiles which users can select.
 Deathlink selection is one per character and is stored on the server the character is on,a character can have
