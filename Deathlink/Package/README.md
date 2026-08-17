@@ -18,6 +18,8 @@ Deathlink has extensive yaml based configuration options. However it can be used
 
 A visual configuration UI is also available (to admins), allowing complete editing of death choices.
 
+![quickconfig](../QuickConfigure.png)
+
 Each of these configuration sections below can be applied to any number of profiles which users can select.
 Deathlink selection is one per character and is stored on the server the character is on,a character can have
 different selections in singleplayer or multiplayer.
