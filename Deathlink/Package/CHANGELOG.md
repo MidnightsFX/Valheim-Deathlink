@@ -1,3 +1,9 @@
+  **0.11.2**
+---
+```
+- Fixes harvest modifiers requiring resource definitions incorrectly
+```
+
   **0.11.1**
 ---
 ```

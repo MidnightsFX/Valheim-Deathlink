@@ -128,7 +128,7 @@
        compiled-against version is allowed and reported as a NOTE; older is the
        failure case. -->
   <ItemGroup>
-    <PackageReference Include="JotunnLib" Version="2.29.2" />
+    <PackageReference Include="JotunnLib" Version="2.30.1" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
   </ItemGroup>
 
@@ -223,10 +223,7 @@
       <_UnityAssembly Include="$(VALHEIM_MANAGED)\com.rlabrecque.steamworks.net.dll" />
       <_UnityAssembly Include="$(VALHEIM_MANAGED)\SoftReferenceableAssets.dll" />
     </ItemGroup>
-    <Copy SourceFiles="@(_UnityAssembly)"
-          DestinationFolder="$(UNITY_FOLDER)\Assets\Assemblies"
-          SkipUnchangedFiles="true"
-          Condition="Exists('%(_UnityAssembly.Identity)')" />
+    <Copy SourceFiles="@(_UnityAssembly)" DestinationFolder="$(UNITY_FOLDER)\Assets\Assemblies" SkipUnchangedFiles="true" Condition="Exists('%(_UnityAssembly.Identity)')" />
   </Target>
 
   <!-- BEGIN mod-tools (managed block; replaced by `mod-tools setup`) -->

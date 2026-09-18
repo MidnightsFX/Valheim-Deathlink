@@ -29,15 +29,22 @@ namespace Deathlink.Death
             return cfg.ResourceModifiers != null && cfg.ResourceModifiers.Count > 0;
         }
 
+        private static bool HasLootModifiers()
+        {
+            var cfg = Deathlink.pcfg();
+            return cfg.DeathLootModifiers != null && cfg.DeathLootModifiers.Count > 0;
+        }
+
         /// <summary>
-        /// Only the harvester on their own machine gets the modifier. Requires a local player,
-        /// configured resource modifiers, and (when hit info is present) that the attacker is the
-        /// local player. Mirrors the guards the previous additive patches used.
+        /// Only the harvester on their own machine gets the modifier or bonus loot. Requires a local
+        /// player, either resource modifiers or loot modifiers to be configured, and that the attacker
+        /// is the local player. The two features are independent: a level with only harvest bonus loot
+        /// (and an empty ResourceModifiers) must still open the bracket so the loot rolls.
         /// </summary>
-        private static bool ShouldScaleHarvest(HitData hit)
+        private static bool ShouldHandleHarvest(HitData hit)
         {
             if (Player.m_localPlayer == null) { return false; }
-            if (!HasResourceModifiers()) { return false; }
+            if (!HasResourceModifiers() && !HasLootModifiers()) { return false; }
             if (hit == null) { return false; }
             return hit.m_attacker == Player.m_localPlayer.GetZDOID();
         }
@@ -134,7 +141,7 @@ namespace Deathlink.Death
             private static void Prefix(HitData hitData, out bool __state)
             {
                 __state = false;
-                if (!ScalingActive && ShouldScaleHarvest(hitData))
+                if (!ScalingActive && ShouldHandleHarvest(hitData))
                 {
                     ScalingActive = true;
                     __state = true;
@@ -162,7 +169,7 @@ namespace Deathlink.Death
                 // patch, which required a DropOnDestroyed drop table).
                 DropOnDestroyed drops = __instance.GetComponent<DropOnDestroyed>();
                 if (drops == null || drops.m_dropWhenDestroyed == null || drops.m_dropWhenDestroyed.IsEmpty()) { return; }
-                if (!ScalingActive && ShouldScaleHarvest(hit))
+                if (!ScalingActive && ShouldHandleHarvest(hit))
                 {
                     ScalingActive = true;
                     __state = true;
@@ -185,7 +192,7 @@ namespace Deathlink.Death
             private static void Prefix(HitData hit, out bool __state)
             {
                 __state = false;
-                if (!ScalingActive && ShouldScaleHarvest(hit))
+                if (!ScalingActive && ShouldHandleHarvest(hit))
                 {
                     ScalingActive = true;
                     __state = true;

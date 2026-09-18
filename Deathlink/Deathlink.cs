@@ -27,7 +27,7 @@ namespace Deathlink
     {
         public const string PluginGUID = "MidnightsFX.Deathlink";
         public const string PluginName = "Deathlink";
-        public const string PluginVersion = "0.11.1";
+        public const string PluginVersion = "0.11.2";
 
         public ValConfig cfg;
         internal static AssetBundle EmbeddedResourceBundle;
