@@ -341,6 +341,10 @@ namespace Deathlink.Death
                 if (!selectionWired) {
                     grid.m_onSelected += (g, item, pos, mod) => OnItemClicked(item, pos);
                     grid.m_onRightClick += (g, item, pos) => { };
+                    // UpdateGui invokes this Func unguarded for every item and Instantiate does
+                    // not copy runtime delegates, so the clone's is null and the first non-empty
+                    // refresh throws. Nothing is draggable in this panel, so nothing accepts a drop.
+                    grid.CanDropDragOntoItem = item => false;
                     selectionWired = true;
                 }
                 return true;

@@ -1,3 +1,10 @@
+  **0.11.3**
+---
+```
+- Fixes a crash when opening the inventory after dying on a level that lets you pick which items
+  to save. The selection panel never appeared and the items it was holding were lost.
+```
+
   **0.11.2**
 ---
 ```
