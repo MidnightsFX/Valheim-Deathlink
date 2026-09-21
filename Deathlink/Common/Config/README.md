@@ -54,6 +54,12 @@ Because of this, **every write to a registered file must go through `YamlConfigM
 `WriteCurrentToDisk`, `WriteRawToDisk` or `RestoreDefaults`. A bare `File.WriteAllText` silently deletes
 the header and nobody notices until someone needs it.
 
+`WriteRawToDisk` removes any copies of the header already at the top of the payload before it writes the
+header, so text that already carries it doesn't end up with two. The server's file text sent to clients
+is the case this is for. A copy is recognised by its first and last lines, so an older version of the
+header is removed as well. Start and end your header with the same banner line (as Deathlink's do) and
+don't reuse that banner in comments of your own at the top of the file.
+
 ## Defaults, and the `[DefaultValue]` trap
 
 Generated files omit anything sitting on its default, which is what keeps them readable. But YamlDotNet

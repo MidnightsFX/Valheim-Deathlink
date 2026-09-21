@@ -164,12 +164,63 @@ namespace Deathlink.Common {
                 // time -- a using declaration would dispose after that and re-seed a stale stamp.
                 using (StreamWriter writer = new StreamWriter(file.Path)) {
                     if (string.IsNullOrEmpty(file.Header) == false) { writer.WriteLine(file.Header); }
-                    writer.WriteLine(serializedYaml);
+                    writer.WriteLine(StripLeadingHeader(serializedYaml, file.Header));
                 }
                 ConfigFileWatcher.RefreshStamp(file.Path);
             } catch (Exception e) {
                 Logger.LogError($"Could not write {file.FileName}: {e.Message}");
             }
+        }
+
+        // Drops every copy of the header already at the top of a payload, so the one written above it is
+        // the only one. The server sends clients its file text with the header included, and without this
+        // every client copy ended up with two. Stripping every copy, not just one, also repairs a file
+        // that already has several.
+        //
+        // A copy is a run of comment lines that opens with the header's first line and closes with its
+        // last line. Only those two are compared, not the text in between, because a server keeps
+        // whatever header version its file was written with until it next rewrites the file, and that
+        // older copy has to be recognised too. A non-comment line ends the search, so content is never
+        // touched. Line endings and trailing whitespace are ignored; everything after the header is
+        // returned exactly as it came in.
+        internal static string StripLeadingHeader(string yaml, string header) {
+            if (string.IsNullOrEmpty(yaml) || string.IsNullOrEmpty(header)) { return yaml; }
+
+            List<string> headerLines = new List<string>();
+            foreach (string line in header.Split('\n')) {
+                string trimmed = line.Trim();
+                if (trimmed.Length > 0) { headerLines.Add(trimmed); }
+            }
+            if (headerLines.Count == 0) { return yaml; }
+            string opening = headerLines[0];
+            string closing = headerLines[headerLines.Count - 1];
+
+            int start = 0;
+            while (true) {
+                int cursor = start;
+                bool opened = false;
+                bool closed = false;
+                while (cursor < yaml.Length) {
+                    int newline = yaml.IndexOf('\n', cursor);
+                    int lineEnd = newline < 0 ? yaml.Length : newline;
+                    string line = yaml.Substring(cursor, lineEnd - cursor).Trim();
+                    cursor = newline < 0 ? yaml.Length : newline + 1;
+
+                    if (line.Length == 0) { continue; }
+                    if (line.StartsWith("#") == false) { break; }
+                    if (opened == false) {
+                        if (line != opening) { break; }
+                        opened = true;
+                        // A one-line header opens and closes on the same line.
+                        if (headerLines.Count == 1) { closed = true; break; }
+                        continue;
+                    }
+                    if (line == closing) { closed = true; break; }
+                }
+                if (closed == false) { break; }
+                start = cursor;
+            }
+            return start == 0 ? yaml : yaml.Substring(start);
         }
 
         // Re-run every file's validator against the values already loaded. Call this once the game state a

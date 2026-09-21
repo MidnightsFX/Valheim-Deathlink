@@ -1,7 +1,9 @@
 ﻿using Deathlink.Common;
 using HarmonyLib;
+using Splatform;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Reflection.Emit;
 using UnityEngine;
 using static Deathlink.Common.DataObjects;
@@ -28,8 +30,26 @@ public static class OnDeathChanges
                 .InsertAndAdvance(new CodeInstruction(OpCodes.Br, label))
                 .ThrowIfNotMatch("Unable to patch Deathlink player death changes.");
 
+            // Vanilla pins every death unconditionally. Route that one call through the
+            // ShowDeathMapMarker toggle so it is the only thing deciding whether a death pin appears.
+            // Set in place rather than replacing the instruction, so any label on it survives.
+            MethodInfo addPin = AccessTools.Method(typeof(Minimap), nameof(Minimap.AddPin));
+            codeMatcher.MatchStartForward(new CodeMatch(instruction => instruction.Calls(addPin)))
+                .ThrowIfNotMatch("Unable to patch Deathlink death map marker.")
+                .SetAndAdvance(OpCodes.Call, AccessTools.Method(typeof(OnDeath_Tombstone_Patch), nameof(AddDeathPinIfEnabled)));
+
             return codeMatcher.Instructions();
         }
+
+        // Same arguments as Minimap.AddPin plus the instance, so the stack vanilla built for AddPin is
+        // consumed unchanged. Vanilla pops the result, so null is fine when the pin is skipped.
+        // Public because it is called directly from the patched method body.
+        public static Minimap.PinData AddDeathPinIfEnabled(Minimap minimap, Vector3 pos, Minimap.PinType type, string name, bool save, bool isChecked, long ownerID, PlatformUserID author)
+        {
+            if (!ValConfig.ShowDeathMapMarker.Value) { return null; }
+            return minimap.AddPin(pos, type, name, save, isChecked, ownerID, author);
+        }
+
         private static void ModifyDeath(Player __instance)
         {
             // Tombstone item dropped modifications
@@ -92,7 +112,9 @@ public static class OnDeathChanges
             switch (Deathlink.pcfg().DeathStyle.itemLossStyle) {
                 case DataObjects.ItemLossStyle.None:
                     Logger.LogDebug("No items destroyed on death.");
-                    itemResults.SafeInsertOrAppend(ItemResults.ItemSaved, playerItemsWithoutNonSkillCheckedItems);
+                    // Split so equipment and everything else can be sent to different places.
+                    itemResults.SafeInsertOrAppend(ItemResults.EquipmentSaved, playerItemsWithoutNonSkillCheckedItems.GetEquipment());
+                    itemResults.SafeInsertOrAppend(ItemResults.ItemSaved, playerItemsWithoutNonSkillCheckedItems.GetNotEquipment());
                     break;
                 case DataObjects.ItemLossStyle.DestroyNonWeaponArmor:
                     Logger.LogDebug("Destroying non Equipment items.");
@@ -163,30 +185,36 @@ public static class OnDeathChanges
                 Logger.LogDebug($"Non skill checked items being left on player.");
             }
 
-            if (itemResults.ContainsKey(ItemResults.EquipmentSaved) && itemResults[ItemResults.EquipmentSaved].Count > 0 || itemResults.ContainsKey(ItemResults.ItemSaved) && itemResults[ItemResults.ItemSaved].Count > 0 || Deathlink.pcfg().DeathStyle.nonSkillCheckedItemAction == NonSkillCheckedItemAction.Tombstone && playerNonSkillCheckItems.Count() > 0) {
-                Logger.LogDebug($"Tombstone needed");
+            // Collect everything headed for the tombstone first, so one is only spawned when something
+            // will actually be in it. An empty one despawns at once and still hands out its loot boost.
+            DeathProgressionDetails style = Deathlink.pcfg().DeathStyle;
+            List<ItemDrop.ItemData> toTombstone = new List<ItemDrop.ItemData>();
+            if (style.EquipmentDestination() == ItemSavedStyle.Tombstone && itemResults.ContainsKey(ItemResults.EquipmentSaved)) {
+                toTombstone.AddRange(itemResults[ItemResults.EquipmentSaved]);
+            }
+            if (style.itemSavedStyle == ItemSavedStyle.Tombstone && itemResults.ContainsKey(ItemResults.ItemSaved)) {
+                toTombstone.AddRange(itemResults[ItemResults.ItemSaved]);
+            }
+            // Items not skill checked are requested to go to the tombstone
+            if (style.nonSkillCheckedItemAction == NonSkillCheckedItemAction.Tombstone) {
+                toTombstone.AddRange(playerNonSkillCheckItems);
+            }
+            // The AzuEPI quickslot branches can report an item that is also in the main inventory list.
+            toTombstone = toTombstone.Distinct().ToList();
+
+            if (toTombstone.Count > 0) {
+                Logger.LogDebug($"Tombstone needed for {toTombstone.Count} items.");
                 GameObject tombstoneGo = UnityEngine.Object.Instantiate<GameObject>(instance.m_tombstone, instance.GetCenterPoint(), instance.transform.rotation);
                 Inventory tombstoneInv = tombstoneGo.GetComponent<Container>().GetInventory();
 
-                // Save equipment and items to the tombstone, if configured to do so
-                if (Deathlink.pcfg().DeathStyle.itemSavedStyle == ItemSavedStyle.Tombstone) {
-                    Logger.LogDebug($"Adding saved items to tombstone.");
-                    if (itemResults.ContainsKey(ItemResults.EquipmentSaved) && itemResults[ItemResults.EquipmentSaved].Count > 0) {
-                        AddItemsToTombstone(tombstoneInv, itemResults[ItemResults.EquipmentSaved]);
-                        itemResults[ItemResults.EquipmentSaved].ForEach(item => instance.m_inventory.RemoveItem(item));
-                    }
-                    if (itemResults.ContainsKey(ItemResults.ItemSaved) && itemResults[ItemResults.ItemSaved].Count > 0) {
-                        AddItemsToTombstone(tombstoneInv, itemResults[ItemResults.ItemSaved]);
-                        itemResults[ItemResults.ItemSaved].ForEach(item => instance.m_inventory.RemoveItem(item));
-                    }
+                // Vanilla unequips before filling the grave. Without this an item keeps its equipped flag
+                // in the tombstone and looks worn after it is taken back. Gear that stays on the
+                // character is left equipped, so it is still worn after respawn.
+                foreach (ItemDrop.ItemData item in toTombstone) {
+                    if (item.m_equipped) { instance.UnequipItem(item, triggerEquipEffects: false); }
                 }
-
-                // Items not skill checked are requested to go to the tombstone
-                if (Deathlink.pcfg().DeathStyle.nonSkillCheckedItemAction == NonSkillCheckedItemAction.Tombstone) {
-                    Logger.LogDebug($"Adding saved non-skill checked items to tombstone.");
-                    AddItemsToTombstone(tombstoneInv, playerNonSkillCheckItems);
-                    playerNonSkillCheckItems.ForEach(item => instance.m_inventory.RemoveItem(item));
-                }
+                AddItemsToTombstone(tombstoneInv, toTombstone);
+                toTombstone.ForEach(item => instance.m_inventory.RemoveItem(item));
 
                 TombStone tombstone = tombstoneGo.GetComponent<TombStone>();
                 PlayerProfile playerProfile = Game.instance.GetPlayerProfile();
@@ -194,11 +222,6 @@ public static class OnDeathChanges
                 long playerId = playerProfile.GetPlayerID();
                 tombstone.Setup(name, playerId);
                 inventory.Changed();
-
-                // Whether or not to spawn the death marker on the map
-                if (ValConfig.ShowDeathMapMarker.Value) {
-                    Minimap.instance.AddPin(instance.transform.position, Minimap.PinType.Death, $"$hud_mapday {EnvMan.instance.GetDay(ZNet.instance.GetTimeSeconds())}", save: true, isChecked: false, 0L);
-                }
             }
         }
 
@@ -207,6 +230,10 @@ public static class OnDeathChanges
             tombstone.m_width += size;
             tombstone.m_height += size;
             foreach (ItemDrop.ItemData item in transferItems) {
+                // Items keep their player-inventory slot, which extra inventory rows (AzuEPI) can put
+                // outside the grid, so make sure every slot is inside it.
+                tombstone.m_width = Mathf.Max(tombstone.m_width, item.m_gridPos.x + 1);
+                tombstone.m_height = Mathf.Max(tombstone.m_height, item.m_gridPos.y + 1);
                 tombstone.m_inventory.Add(item);
             }
             tombstone.Changed();

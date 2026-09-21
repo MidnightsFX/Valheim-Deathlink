@@ -490,6 +490,12 @@ namespace Deathlink.Common
                         "skill loss will get WORSE as Deathlink skill increases.");
                 }
 
+                if (value.DeathStyle.itemLossStyle == ItemLossStyle.DestroyAll
+                    && value.DeathStyle.equipmentSavedStyle != EquipmentSavedStyle.SameAsItems) {
+                    report.Warn($"level '{level.Key}' sets EquipmentSavedStyle, but ItemLossStyle is DestroyAll, " +
+                        "so no equipment is saved and it has no effect.");
+                }
+
                 ValidateResourceModifiers(level.Key, value, report);
                 ValidateLootModifiers(level.Key, value, report);
             }

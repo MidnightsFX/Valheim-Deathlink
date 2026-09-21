@@ -138,6 +138,12 @@ namespace Deathlink.Common {
 #                                 much you keep scales with your Deathlink skill, between the Min
 #                                 and Max numbers below.
 #   ItemSavedStyle                OnCharacter | Tombstone   Where the items you keep end up.
+#   EquipmentSavedStyle           SameAsItems | OnCharacter | Tombstone
+#                                 Where kept equipment ends up (weapons, armor, tools, shields,
+#                                 utility items and trinkets). SameAsItems, the default, follows
+#                                 ItemSavedStyle. To keep your gear on you and drop everything else
+#                                 in the tombstone: ItemLossStyle None, ItemSavedStyle Tombstone,
+#                                 EquipmentSavedStyle OnCharacter.
 #   NonSkillCheckedItemAction     Destroy | Tombstone | Save
 #                                 What happens to items on the ItemsNotSkillChecked list in the
 #                                 BepInEx config, which never take part in the skill roll.
@@ -155,7 +161,7 @@ namespace Deathlink.Common {
 #   MaxSkillLossPercentage        0-1     Skill lost at ZERO Deathlink skill.
 #                                 Note the direction: high Deathlink skill moves you toward the Min.
 #
-#   FoodLossOnDeath               bool    Whether food buffs are lost.
+#   FoodLossOnDeath               bool    Whether food buffs are lost. false keeps all of them.
 #   FoodLossUsesDeathlink         bool    Scale how much food is lost with Deathlink skill instead
 #                                 of clearing all of it.
 #

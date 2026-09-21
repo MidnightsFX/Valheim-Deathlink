@@ -68,6 +68,16 @@ public class DataObjects
         Tombstone
     }
 
+    // Where saved equipment ends up, separately from everything else. The zero member inherits
+    // ItemSavedStyle, so a file that never mentions it behaves exactly as before, OmitDefaults keeps it
+    // out of rewrites, and a misspelled value falls back to the harmless option.
+    public enum EquipmentSavedStyle
+    {
+        SameAsItems,
+        OnCharacter,
+        Tombstone
+    }
+
     public enum ResourceGainTypes
     {
         Kills,
@@ -120,10 +130,20 @@ public class DataObjects
         public float minSkillLossPercentage;
         public ItemLossStyle itemLossStyle;
         public ItemSavedStyle itemSavedStyle;
+        public EquipmentSavedStyle equipmentSavedStyle;
         [DefaultValue(true)]
         public bool EnableItemSavingChoices = true;
         [DefaultValue(NonSkillCheckedItemAction.Tombstone)]
         public NonSkillCheckedItemAction nonSkillCheckedItemAction = NonSkillCheckedItemAction.Tombstone;
+
+        // A method rather than a property so YamlDotNet never tries to serialize it.
+        internal ItemSavedStyle EquipmentDestination() {
+            switch (equipmentSavedStyle) {
+                case EquipmentSavedStyle.OnCharacter: return ItemSavedStyle.OnCharacter;
+                case EquipmentSavedStyle.Tombstone: return ItemSavedStyle.Tombstone;
+                default: return itemSavedStyle;
+            }
+        }
     }
 
     public class DeathResourceModifier
@@ -406,6 +426,11 @@ public class DataObjects
                 } else {
                     sb.AppendLine(Localization.instance.Localize($"$saved_to_tombstone"));
                 }
+                if (DeathStyle.equipmentSavedStyle == EquipmentSavedStyle.OnCharacter) {
+                    sb.AppendLine(Localization.instance.Localize($"$equipment_saved_to_character"));
+                } else if (DeathStyle.equipmentSavedStyle == EquipmentSavedStyle.Tombstone) {
+                    sb.AppendLine(Localization.instance.Localize($"$equipment_saved_to_tombstone"));
+                }
                 if (DeathStyle.nonSkillCheckedItemAction == NonSkillCheckedItemAction.Tombstone) {
                     sb.AppendLine(Localization.instance.Localize($"$non_skill_items_tombstone"));
                 }
@@ -423,6 +448,8 @@ public class DataObjects
                 } else {
                     sb.AppendLine(Localization.instance.Localize($"$food_loss"));
                 }
+            } else {
+                sb.AppendLine(Localization.instance.Localize($"$food_kept"));
             }
 
             //sb.AppendLine();

@@ -251,6 +251,8 @@ namespace Deathlink.Death
             if (destroysEverything == false) {
                 AddScrollEnumCycle(content, w, "$dl_cfg_itemsavedstyle", Enum.GetNames(typeof(ItemSavedStyle)),
                     (int)style.itemSavedStyle, i => style.itemSavedStyle = (ItemSavedStyle)i);
+                AddScrollEnumCycle(content, w, "$dl_cfg_equipmentsavedstyle", Enum.GetNames(typeof(EquipmentSavedStyle)),
+                    (int)style.equipmentSavedStyle, i => style.equipmentSavedStyle = (EquipmentSavedStyle)i);
                 AddScrollEnumCycle(content, w, "$dl_cfg_nonskillchecked",
                     Enum.GetNames(typeof(NonSkillCheckedItemAction)), (int)style.nonSkillCheckedItemAction,
                     i => style.nonSkillCheckedItemAction = (NonSkillCheckedItemAction)i);

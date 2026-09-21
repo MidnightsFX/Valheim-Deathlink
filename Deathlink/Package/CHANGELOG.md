@@ -1,3 +1,17 @@
+  **0.12.0**
+---
+```
+- New per-level EquipmentSavedStyle (SameAsItems | OnCharacter | Tombstone) sends saved equipment
+  somewhere other than the rest of your items. ItemLossStyle None + ItemSavedStyle Tombstone +
+  EquipmentSavedStyle OnCharacter keeps your gear on you and drops everything else in the tombstone.
+- ShowDeathMapMarker now decides on its own whether a death pin appears: on gives exactly one pin per
+  death, off gives none. Previously a death with a tombstone got two pins, and turning it off still
+  left one.
+- Levels where nothing goes to the tombstone no longer spawn an empty one.
+- The level description now says when food is kept on death.
+- Fixes client copies of DeathChoices.yaml getting the documentation header written twice.
+```
+
   **0.11.3**
 ---
 ```

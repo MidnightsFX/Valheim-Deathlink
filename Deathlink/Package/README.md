@@ -103,6 +103,7 @@ Deathstyle configuration governs what happens when you die.
     ItemLossStyle: DeathlinkBased          # Item loss style, can be None, DestroyNonWeaponArmor, DeathlinkBased, DestroyAll
     NonSkillCheckedItemAction: Tombstone   # If items are set to avoid skillcheck, what happens to them, can be Destroy, Tombstone, Save
     ItemSavedStyle: Tombstone              # Items that are saved can be: OnCharacter, Tombstone
+    EquipmentSavedStyle: OnCharacter       # Where saved equipment goes: SameAsItems (default, follows ItemSavedStyle), OnCharacter, Tombstone
   DeathSkillRate: 1                        # Rate at which Deathlink skill increases, higher is faster
   Fallback: true                           # Marks the level players are moved to when the one they had
                                            # selected is renamed or removed. Set it on exactly one level.
