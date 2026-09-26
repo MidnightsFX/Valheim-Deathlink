@@ -94,6 +94,10 @@ public class DataObjects
     const string color_good = "#b9f2ff";
     const string color_bad = "#ff4040";
 
+    // U+1F480. No Valheim font has it: it comes from the Noto Emoji font at the end of the TextMeshPro
+    // fallback chain, so it only renders reliably in TMP text, not in a legacy UI.Text.
+    const string skull = "\U0001F480";
+
     // The original misspelling of BonusModifier, kept as a read-only alias so every DeathChoices.yaml
     // written before the rename still loads. The shim property returns null so OmitDefaults drops it on
     // write: files are read under either spelling, but only ever written under the corrected one.
@@ -402,19 +406,22 @@ public class DataObjects
         public string GetDeathStyleDescription() {
             StringBuilder sb = new StringBuilder();
 
+            // Every line that means items can be destroyed is drawn in color_bad and marked with skulls,
+            // so it can't be missed when picking a choice. DeathlinkBased counts: anything past the kept
+            // budget is destroyed. DestroyNonWeaponArmor gets a single skull since equipment survives.
             switch (DeathStyle.itemLossStyle)
             {
                 case ItemLossStyle.None:
                     sb.AppendLine(Localization.instance.Localize($"$no_item_loss"));
                     break;
                 case ItemLossStyle.DestroyNonWeaponArmor:
-                    sb.AppendLine(Localization.instance.Localize($"$no_equipment_loss"));
+                    sb.AppendLine(Localization.instance.Localize($"<color={color_bad}>{skull} $no_equipment_loss</color>"));
                     break;
                 case ItemLossStyle.DestroyAll:
-                    sb.AppendLine(Localization.instance.Localize($"$all_item_loss"));
+                    sb.AppendLine(Localization.instance.Localize($"<color={color_bad}>{skull} $all_item_loss {skull}</color>"));
                     break;
                 case ItemLossStyle.DeathlinkBased:
-                    sb.AppendLine(Localization.instance.Localize($"$limited_saved_deathlink"));
+                    sb.AppendLine(Localization.instance.Localize($"<color={color_bad}>{skull} $limited_saved_deathlink {skull}</color>"));
                     sb.AppendLine(Localization.instance.Localize($"$equipment_kept <color={color_good}>{DeathStyle.minEquipmentKept}</color> - <color={color_good}>{DeathStyle.maxEquipmentKept}</color>"));
                     sb.AppendLine(Localization.instance.Localize($"$items_kept <color={color_good}>{DeathStyle.minItemsKept}</color> - <color={color_good}>{DeathStyle.maxItemsKept}</color>"));
                     break;
@@ -438,7 +445,7 @@ public class DataObjects
                     sb.AppendLine(Localization.instance.Localize($"$non_skill_items_character"));
                 }
                 if (DeathStyle.nonSkillCheckedItemAction == NonSkillCheckedItemAction.Destroy) {
-                    sb.AppendLine(Localization.instance.Localize($"$non_skill_items_destroy"));
+                    sb.AppendLine(Localization.instance.Localize($"<color={color_bad}>{skull} $non_skill_items_destroy {skull}</color>"));
                 }
             }
 

@@ -2,6 +2,7 @@
 using HarmonyLib;
 using Jotunn.Managers;
 using System.Collections.Generic;
+using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 using static Deathlink.Common.DataObjects;
@@ -62,7 +63,7 @@ namespace Deathlink.Death
             private static GameObject ChoicesContainer;
             private static GameObject manualCloseButton;
             private static GameObject selectChoiceButton;
-            private static Text DeathPenaltyDescription;
+            private static TextMeshProUGUI DeathPenaltyDescription;
             private static Text CombatModifiersDescription;
             private static Text XPModifiersDescription;
             private static Text LootModifersDescription;
@@ -181,7 +182,7 @@ namespace Deathlink.Death
                         // switched off, which would otherwise overwrite the descriptions/selection.
                         if (!isOn) { return; }
                         //Logger.LogDebug("Setting up onclock");
-                        DeathPenaltyDescription.GetComponent<Text>().text = entry.Value.GetDeathStyleDescription();
+                        DeathPenaltyDescription.text = entry.Value.GetDeathStyleDescription();
                         //Logger.LogDebug("Set death description");
                         CombatModifiersDescription.GetComponent<Text>().text = entry.Value.GetDamageModifierDescription();
                         //Logger.LogDebug("Set combat mod");
@@ -289,25 +290,14 @@ namespace Deathlink.Death
                     addContentSizeFitter: false);
                 deathpenaltyTitle.name = "DeathPenaltyTitle";
 
-                var deathpenalty = GUIManager.Instance.CreateText(
+                DeathPenaltyDescription = CreateTMPText(
+                    name: "DeathPenaltyDesc",
                     text: Localization.instance.Localize("$death_penalty_description"),
                     parent: DeathChoicePanel.transform,
-                    anchorMin: new Vector2(0.5f, 0.5f),
-                    anchorMax: new Vector2(0.5f, 0.5f),
                     position: new Vector2(147f, 240f),
-                    font: GUIManager.Instance.AveriaSerifBold,
                     fontSize: 18,
-                    color: Color.white,
-                    outline: true,
-                    outlineColor: Color.black,
                     width: 490f,
-                    height: 160f,
-                    addContentSizeFitter: false);
-                deathpenalty.name = "DeathPenaltyDesc";
-                DeathPenaltyDescription = deathpenalty.GetComponent<Text>();
-                DeathPenaltyDescription.resizeTextForBestFit = true;
-                DeathPenaltyDescription.resizeTextMaxSize = 18;
-                //DeathPenaltyDescription.verticalOverflow = VerticalWrapMode.Overflow;
+                    height: 160f);
 
                 var combatTitle = GUIManager.Instance.CreateText(
                     text: Localization.instance.Localize("$combat_header"),
@@ -506,6 +496,41 @@ namespace Deathlink.Death
                     height: 40f,
                     addContentSizeFitter: false);
                 deathSettingName.name = "ChoiceName";
+            }
+
+            // Stand-in for GUIManager.CreateText, which only makes legacy UI.Text, for text that has to
+            // show the item-destruction skull: that glyph only exists in Valheim's TMP fallback fonts.
+            // Mirrors CreateText's layout and the Text defaults the old version relied on (top-left,
+            // wrapped, best fit down to 10, truncated), with an outline in place of the Outline component.
+            private static TextMeshProUGUI CreateTMPText(string name, string text, Transform parent, Vector2 position, float fontSize, float width, float height) {
+                GameObject go = new GameObject(name, typeof(RectTransform));
+                go.transform.SetParent(parent, false);
+                RectTransform rt = go.GetComponent<RectTransform>();
+                rt.anchorMin = new Vector2(0.5f, 0.5f);
+                rt.anchorMax = new Vector2(0.5f, 0.5f);
+                rt.anchoredPosition = position;
+                rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, width);
+                rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, height);
+
+                TextMeshProUGUI tmp = go.AddComponent<TextMeshProUGUI>();
+                // The serif face the rest of the panel uses; Jotunn only exposes the sans one as a TMP font.
+                TMP_FontAsset font = PrefabManager.Cache.GetPrefab<TMP_FontAsset>("Valheim-AveriaSerifLibre");
+                tmp.font = font != null ? font : GUIManager.Instance.TMP_AveriaSansLibre;
+                tmp.fontStyle = FontStyles.Bold;
+                tmp.fontSize = fontSize;
+                tmp.enableAutoSizing = true;
+                tmp.fontSizeMin = 10f;
+                tmp.fontSizeMax = fontSize;
+                tmp.color = Color.white;
+                tmp.alignment = TextAlignmentOptions.TopLeft;
+                tmp.overflowMode = TextOverflowModes.Truncate;
+                // Same values as Valheim's own "- Outline" material presets. Set on this instance rather
+                // than loading a preset by name: two materials share that name, bound to different atlases.
+                tmp.fontMaterial.SetFloat(ShaderUtilities.ID_FaceDilate, 0.175f);
+                tmp.outlineColor = Color.black;
+                tmp.outlineWidth = 0.175f;
+                tmp.text = text;
+                return tmp;
             }
         }
     }

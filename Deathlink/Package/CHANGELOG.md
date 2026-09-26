@@ -1,3 +1,9 @@
+  **0.12.1**
+---
+```
+- Fix a race condition that could result in RPCs being registered incorrectly
+```
+
   **0.12.0**
 ---
 ```
