@@ -98,6 +98,12 @@ public static class OnDeathChanges
 
             Dictionary<ItemResults, List<ItemDrop.ItemData>> itemResults = new Dictionary<ItemResults, List<ItemDrop.ItemData>>();
 
+            // Only ChooseEquipment fills these. It decides for itself what goes in the tombstone, so it
+            // bypasses ItemSavedStyle and EquipmentSavedStyle entirely.
+            List<ItemDrop.ItemData> alwaysToTombstone = new List<ItemDrop.ItemData>();
+            List<ItemDrop.ItemData> equipmentToChooseFrom = null;
+            int equipmentPicks = 0;
+
             // Filter out the non-skill-checked items, this allows them to act differently than those that are skill checked
             string[] nonSkillCheckedItems = ValConfig.ItemsNotSkillChecked.Value.Split(',');
             foreach (ItemDrop.ItemData item in playerItems) {
@@ -107,6 +113,8 @@ public static class OnDeathChanges
                     playerItemsWithoutNonSkillCheckedItems.Add(item);
                 }
             }
+            // AzuEPI quickslots are extra rows of m_inventory, so their items are already in the two lists
+            // above and every case below decides them along with the rest of the inventory.
 
             // Item destruction style
             switch (Deathlink.pcfg().DeathStyle.itemLossStyle) {
@@ -123,28 +131,12 @@ public static class OnDeathChanges
                     foreach (var item in playerItemsWithoutNonSkillCheckedItems.GetNotEquipment()) {
                         instance.m_inventory.RemoveItem(item);
                     }
-                    if (Deathlink.AzuEPILoaded) {
-                        Logger.LogDebug("AzuEPI| Removing non-equipment items from quickslots.");
-                        foreach (ItemDrop.ItemData item in AzuExtendedPlayerInventory.API.GetQuickSlotsItems()) {
-                            if (!item.IsEquipment()) {
-                                instance.m_inventory.RemoveItem(item);
-                                itemResults.SafeInsertOrAppend(ItemResults.ItemLost, item);
-                            } else {
-                                itemResults.SafeInsertOrAppend(ItemResults.EquipmentSaved, item);
-                            }
-                        }
-                    }
                     break;
                 case DataObjects.ItemLossStyle.DestroyAll:
                     Logger.LogDebug("Destroying all non skill checked items.");
                     itemResults.SafeInsertOrAppend(ItemResults.ItemLost, playerItemsWithoutNonSkillCheckedItems);
                     foreach(ItemDrop.ItemData item in playerItemsWithoutNonSkillCheckedItems) {
                         instance.m_inventory.RemoveItem(item);
-                    }
-                    if (Deathlink.AzuEPILoaded) {
-                        Logger.LogDebug("AzuEPI| Destroying quickslot items.");
-                        itemResults.SafeInsertOrAppend(ItemResults.ItemLost, AzuExtendedPlayerInventory.API.GetQuickSlotsItems());
-                        AzuExtendedPlayerInventory.API.GetQuickSlotsItems().ForEach(item => instance.m_inventory.RemoveItem(item));
                     }
                     break;
                 case DataObjects.ItemLossStyle.DeathlinkBased:
@@ -173,12 +165,30 @@ public static class OnDeathChanges
                     itemResults[ItemResults.EquipmentLost].ForEach(item => instance.m_inventory.RemoveItem(item));
                     itemResults[ItemResults.ItemLost].ForEach(item => instance.m_inventory.RemoveItem(item));
                     break;
+                case DataObjects.ItemLossStyle.ChooseEquipment:
+                    // Everything goes in the tombstone and the picks are pulled back out after respawn, so
+                    // quitting before choosing leaves the player with a normal full tombstone.
+                    List<ItemDrop.ItemData> equipment = playerItemsWithoutNonSkillCheckedItems.GetEquipment();
+                    equipmentPicks = CalculateEquipmentSavable(DeathProgressionSkill.DeathSkillCalculatePercentWithBonus());
+                    alwaysToTombstone.AddRange(playerItemsWithoutNonSkillCheckedItems.GetNotEquipment());
+                    if (equipment.Count <= equipmentPicks) {
+                        // Every piece fits the allowance, so there is nothing to choose: it all stays on the
+                        // character, still equipped.
+                        Logger.LogDebug($"ChooseEquipment| keeping all {equipment.Count} equipment, allowance is {equipmentPicks}.");
+                    } else {
+                        alwaysToTombstone.AddRange(equipment);
+                        if (equipmentPicks > 0) { equipmentToChooseFrom = equipment; }
+                        Logger.LogDebug($"ChooseEquipment| {equipment.Count} equipment to the tombstone, {equipmentPicks} can be taken back.");
+                    }
+                    break;
             }
 
             // Determine what happens to the non-skill checked items, these items can also be added to the tombstone
             if (Deathlink.pcfg().DeathStyle.nonSkillCheckedItemAction == NonSkillCheckedItemAction.Destroy) {
                 Logger.LogDebug($"Non skill checked being destroyed.");
                 itemResults.SafeInsertOrAppend(ItemResults.ItemLost, playerNonSkillCheckItems);
+                // Vanilla CreateTombStone is skipped, so anything left in the inventory stays on the character.
+                playerNonSkillCheckItems.ForEach(item => instance.m_inventory.RemoveItem(item));
             }
             // Items not skill checked are requested to go to the tombstone
             if (Deathlink.pcfg().DeathStyle.nonSkillCheckedItemAction == NonSkillCheckedItemAction.Save) {
@@ -195,12 +205,11 @@ public static class OnDeathChanges
             if (style.itemSavedStyle == ItemSavedStyle.Tombstone && itemResults.ContainsKey(ItemResults.ItemSaved)) {
                 toTombstone.AddRange(itemResults[ItemResults.ItemSaved]);
             }
+            toTombstone.AddRange(alwaysToTombstone);
             // Items not skill checked are requested to go to the tombstone
             if (style.nonSkillCheckedItemAction == NonSkillCheckedItemAction.Tombstone) {
                 toTombstone.AddRange(playerNonSkillCheckItems);
             }
-            // The AzuEPI quickslot branches can report an item that is also in the main inventory list.
-            toTombstone = toTombstone.Distinct().ToList();
 
             if (toTombstone.Count > 0) {
                 Logger.LogDebug($"Tombstone needed for {toTombstone.Count} items.");
@@ -222,6 +231,12 @@ public static class OnDeathChanges
                 long playerId = playerProfile.GetPlayerID();
                 tombstone.Setup(name, playerId);
                 inventory.Changed();
+
+                // After the items are in: the choice records each piece's slot in the tombstone.
+                if (equipmentToChooseFrom != null) {
+                    DeathSavingOptions.CaptureEquipmentChoice(tombstoneGo.GetComponent<ZNetView>().GetZDO().m_uid,
+                        playerId, equipmentToChooseFrom, equipmentPicks);
+                }
             }
         }
 
@@ -247,7 +262,8 @@ public static class OnDeathChanges
         }
 
         /// <summary>
-        /// Skill-scaled count of equipment items kept on a DeathlinkBased death.
+        /// Skill-scaled count of equipment items kept on a DeathlinkBased death, and the number of pieces
+        /// a ChooseEquipment death lets the player take back from the tombstone.
         /// </summary>
         internal static int CalculateEquipmentSavable(float deathskillbonus) {
             return Mathf.RoundToInt(((Deathlink.pcfg().DeathStyle.maxEquipmentKept - Deathlink.pcfg().DeathStyle.minEquipmentKept) * deathskillbonus) + Deathlink.pcfg().DeathStyle.minEquipmentKept);
@@ -297,26 +313,6 @@ public static class OnDeathChanges
                 } else {
                     Logger.LogDebug($"Save limit reached, removing: {equipment.m_shared.m_name}");
                     itemResults[ItemResults.EquipmentLost].Add(equipment);
-                }
-            }
-
-            if (Deathlink.AzuEPILoaded) {
-                foreach (ItemDrop.ItemData item in AzuExtendedPlayerInventory.API.GetQuickSlotsItems()) {
-                    if (item.IsEquipment() && numberOfItemsSavable > 0) {
-                        numberOfItemsSavable -= 1;
-                        items_to_keep -= 1;
-                        itemResults[ItemResults.EquipmentSaved].Add(item);
-                        continue;
-                    } else {
-                        // Non equipment in a quickslot
-                        if (numberOfItemsSavable > 0) {
-                            numberOfItemsSavable -= 1;
-                            items_to_keep -= 1;
-                            itemResults[ItemResults.ItemSaved].Add(item);
-                        } else {
-                            itemResults[ItemResults.ItemLost].Add(item);
-                        }
-                    }
                 }
             }
 

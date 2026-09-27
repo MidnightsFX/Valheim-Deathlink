@@ -1,3 +1,13 @@
+  **0.13.0**
+---
+```
+- Adds ItemLossStyle ChooseEquipment: everything goes to the tombstone, pick gear to take back on respawn
+- Item saving choices are only offered to the character that died
+- Fixes NonSkillCheckedItemAction Destroy not destroying items
+	- AzuEPI: fixes quickslot ItemsNotSkillChecked items ignoring NonSkillCheckedItemAction
+	- AzuEPI: fixes quickslot items being rolled twice on DeathlinkBased levels
+```
+
   **0.12.1**
 ---
 ```

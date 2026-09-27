@@ -133,10 +133,17 @@ namespace Deathlink.Common {
 # DeathStyle - what actually happens when you die
 # ---------------------------------------------------------------------------------------------
 #
-#   ItemLossStyle                 None | DestroyNonWeaponArmor | DeathlinkBased | DestroyAll
+#   ItemLossStyle                 None | DestroyNonWeaponArmor | DeathlinkBased | DestroyAll |
+#                                 ChooseEquipment
 #                                 None keeps everything. DeathlinkBased is the interesting one: how
 #                                 much you keep scales with your Deathlink skill, between the Min
 #                                 and Max numbers below.
+#                                 ChooseEquipment destroys nothing: everything goes to the tombstone,
+#                                 and after respawning the player picks MinEquipmentKept to
+#                                 MaxEquipmentKept pieces of equipment (scaled by Deathlink skill) to
+#                                 take back out of it. If they carry no more equipment than that, it
+#                                 all simply stays on them. ItemSavedStyle, EquipmentSavedStyle and
+#                                 EnableItemSavingChoices do nothing on this style.
 #   ItemSavedStyle                OnCharacter | Tombstone   Where the items you keep end up.
 #   EquipmentSavedStyle           SameAsItems | OnCharacter | Tombstone
 #                                 Where kept equipment ends up (weapons, armor, tools, shields,
@@ -152,7 +159,9 @@ namespace Deathlink.Common {
 #
 #   MinItemsKept / MaxItemsKept              whole numbers  Non-equipment kept, at 0% and 100%
 #                                                           Deathlink skill respectively.
-#   MinEquipmentKept / MaxEquipmentKept      whole numbers  Equipment kept, same scaling.
+#   MinEquipmentKept / MaxEquipmentKept      whole numbers  Equipment kept, same scaling. On
+#                                                           ChooseEquipment, the pieces the player
+#                                                           may take back from the tombstone.
 #   MinItemsKeptChoices / MaxItemsKeptChoices whole numbers How many of those the player gets to
 #                                                           choose, same scaling.
 #
@@ -222,6 +231,15 @@ namespace Deathlink.Common {
 #       Prefabs: [Wood, FineWood, RoundLog]
 #       BonusModifier: 1.5
 #       BonusActions: [Harvesting]
+#
+# Quartermaster:
+#   DisplayName: Quartermaster
+#   DeathStyle:
+#     ItemLossStyle: ChooseEquipment
+#     MinEquipmentKept: 1
+#     MaxEquipmentKept: 5
+#     MinSkillLossPercentage: 0.03
+#     MaxSkillLossPercentage: 0.10
 #
 # Related settings live in the BepInEx config file for this mod: DefaultDeathChoice (skip the
 # selection popup for new players), AllowedDeathChoiceChanges (how many times a player may switch),

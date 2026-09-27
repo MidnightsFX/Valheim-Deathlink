@@ -83,6 +83,7 @@ public class ValConfig
         resetChoiceRPC = NetworkManager.Instance.AddRPC("DEATHLK_RESET", OnServerRecieveResetRPC, OnClientRecieveResetRPC);
 
         LeaderboardData.SetupRPC();
+        DeathSavingOptions.SetupRPC();
     }
 
     // Create Configuration and load it.

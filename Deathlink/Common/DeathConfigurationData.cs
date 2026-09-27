@@ -495,6 +495,9 @@ namespace Deathlink.Common
                     report.Warn($"level '{level.Key}' sets EquipmentSavedStyle, but ItemLossStyle is DestroyAll, " +
                         "so no equipment is saved and it has no effect.");
                 }
+                if (value.DeathStyle.itemLossStyle == ItemLossStyle.ChooseEquipment) {
+                    ValidateChooseEquipment(level.Key, value.DeathStyle, report);
+                }
 
                 ValidateResourceModifiers(level.Key, value, report);
                 ValidateLootModifiers(level.Key, value, report);
@@ -524,6 +527,22 @@ namespace Deathlink.Common
             }
 
             return report;
+        }
+
+        // ItemSavedStyle and EnableItemSavingChoices are ignored by ChooseEquipment too, but their zero
+        // values are indistinguishable from "not set", so only EquipmentSavedStyle can be caught.
+        private static void ValidateChooseEquipment(string levelKey, DeathProgressionDetails style, ValidationReport report) {
+            if (style.equipmentSavedStyle != EquipmentSavedStyle.SameAsItems) {
+                report.Warn($"level '{levelKey}' sets EquipmentSavedStyle, but ItemLossStyle is ChooseEquipment, which always " +
+                    "leaves unpicked equipment in the tombstone and gives picked equipment back, so it has no effect.");
+            }
+            if (style.minEquipmentKept <= 0 && style.maxEquipmentKept <= 0) {
+                report.Warn($"level '{levelKey}' is ChooseEquipment with MinEquipmentKept and MaxEquipmentKept both 0, so " +
+                    "the player never gets to take anything back and everything stays in the tombstone.");
+            } else if (style.minEquipmentKept > style.maxEquipmentKept) {
+                report.Warn($"level '{levelKey}' has MinEquipmentKept above MaxEquipmentKept; the player will get to take " +
+                    "back FEWER pieces as Deathlink skill increases.");
+            }
         }
 
         private static void ValidateResourceModifiers(string levelKey, DeathChoiceLevel level, ValidationReport report) {

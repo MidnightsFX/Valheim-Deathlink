@@ -242,22 +242,36 @@ namespace Deathlink.Death
             AddScrollEnumCycle(content, w, "$dl_cfg_itemlossstyle", Enum.GetNames(typeof(ItemLossStyle)),
                 (int)style.itemLossStyle, i => {
                     style.itemLossStyle = (ItemLossStyle)i;
-                    // The keep budgets only mean anything for DeathlinkBased, so the rows come and go --
-                    // rebuild rather than leave dead sliders on screen.
+                    // Which rows mean anything depends on the style, so they come and go -- rebuild rather
+                    // than leave dead controls on screen.
                     BuildDetail();
                 });
 
             bool destroysEverything = style.itemLossStyle == ItemLossStyle.DestroyAll;
+            // ChooseEquipment decides for itself where everything goes, and is itself the player choice,
+            // so the saved-style rows and the choices toggle would do nothing on it.
+            bool choosesEquipment = style.itemLossStyle == ItemLossStyle.ChooseEquipment;
             if (destroysEverything == false) {
-                AddScrollEnumCycle(content, w, "$dl_cfg_itemsavedstyle", Enum.GetNames(typeof(ItemSavedStyle)),
-                    (int)style.itemSavedStyle, i => style.itemSavedStyle = (ItemSavedStyle)i);
-                AddScrollEnumCycle(content, w, "$dl_cfg_equipmentsavedstyle", Enum.GetNames(typeof(EquipmentSavedStyle)),
-                    (int)style.equipmentSavedStyle, i => style.equipmentSavedStyle = (EquipmentSavedStyle)i);
+                if (choosesEquipment == false) {
+                    AddScrollEnumCycle(content, w, "$dl_cfg_itemsavedstyle", Enum.GetNames(typeof(ItemSavedStyle)),
+                        (int)style.itemSavedStyle, i => style.itemSavedStyle = (ItemSavedStyle)i);
+                    AddScrollEnumCycle(content, w, "$dl_cfg_equipmentsavedstyle", Enum.GetNames(typeof(EquipmentSavedStyle)),
+                        (int)style.equipmentSavedStyle, i => style.equipmentSavedStyle = (EquipmentSavedStyle)i);
+                }
                 AddScrollEnumCycle(content, w, "$dl_cfg_nonskillchecked",
                     Enum.GetNames(typeof(NonSkillCheckedItemAction)), (int)style.nonSkillCheckedItemAction,
                     i => style.nonSkillCheckedItemAction = (NonSkillCheckedItemAction)i);
-                AddScrollToggle(content, w, "$dl_cfg_enablesavingchoices", style.EnableItemSavingChoices,
-                    v => style.EnableItemSavingChoices = v);
+                if (choosesEquipment == false) {
+                    AddScrollToggle(content, w, "$dl_cfg_enablesavingchoices", style.EnableItemSavingChoices,
+                        v => style.EnableItemSavingChoices = v);
+                }
+            }
+
+            // Min/MaxEquipmentKept, relabelled: on this style they are how many pieces the player takes back.
+            if (choosesEquipment) {
+                AddScrollHeader(content, w, "$dl_cfg_keepbudget");
+                AddScrollSlider(content, w, "$dl_cfg_minequippicks", 0f, 16f, style.minEquipmentKept, true, v => style.minEquipmentKept = (int)v);
+                AddScrollSlider(content, w, "$dl_cfg_maxequippicks", 0f, 16f, style.maxEquipmentKept, true, v => style.maxEquipmentKept = (int)v);
             }
 
             // Hidden rather than zeroed, so flipping back to DeathlinkBased restores what was configured.

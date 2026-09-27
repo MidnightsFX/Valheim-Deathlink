@@ -100,13 +100,32 @@ Deathstyle configuration governs what happens when you die.
     SkillLossOnDeath: true                 # Whether or not skill loss occurs on death
     MaxSkillLossPercentage: 0.2            # The maximum percentage of skill lost on death (you start here, example is 20%)
     MinSkillLossPercentage: 0.05           # The minimum skill loss, at max skill level (example is 5%)
-    ItemLossStyle: DeathlinkBased          # Item loss style, can be None, DestroyNonWeaponArmor, DeathlinkBased, DestroyAll
+    ItemLossStyle: DeathlinkBased          # Item loss style, can be None, DestroyNonWeaponArmor, DeathlinkBased, DestroyAll, ChooseEquipment
     NonSkillCheckedItemAction: Tombstone   # If items are set to avoid skillcheck, what happens to them, can be Destroy, Tombstone, Save
     ItemSavedStyle: Tombstone              # Items that are saved can be: OnCharacter, Tombstone
     EquipmentSavedStyle: OnCharacter       # Where saved equipment goes: SameAsItems (default, follows ItemSavedStyle), OnCharacter, Tombstone
   DeathSkillRate: 1                        # Rate at which Deathlink skill increases, higher is faster
   Fallback: true                           # Marks the level players are moved to when the one they had
                                            # selected is renamed or removed. Set it on exactly one level.
+```
+
+#### Choosing gear from the tombstone
+`ItemLossStyle: ChooseEquipment` destroys nothing. Everything goes to your tombstone, and after respawning you
+open your inventory and choose some of your equipment to take back out of it. How many pieces you get scales
+with your Deathlink skill, between `MinEquipmentKept` and `MaxEquipmentKept`. If you carry no more equipment
+than that, it simply stays on you. `ItemSavedStyle`, `EquipmentSavedStyle` and `EnableItemSavingChoices` are
+ignored on this style.
+
+```yaml
+Quartermaster:
+  DisplayName: Quartermaster
+  DeathStyle:
+    ItemLossStyle: ChooseEquipment
+    MinEquipmentKept: 1                    # Pieces of gear taken back at 0% Deathlink skill
+    MaxEquipmentKept: 5                    # Pieces of gear taken back at 100% Deathlink skill
+    NonSkillCheckedItemAction: Tombstone
+    MinSkillLossPercentage: 0.03
+    MaxSkillLossPercentage: 0.10
 ```
 
 ### Resource Configuration

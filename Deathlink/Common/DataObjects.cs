@@ -46,12 +46,16 @@ public class DataObjects
     public static readonly string LeaderboardTotalLifeKey = "DL_LBTotal";
     public static readonly string LeaderboardDeathCountKey = "DL_LBDeaths";
     public static readonly string LeaderboardDamageKey = "DL_LBDamage";
+    // New members go on the END: the editor's cycle button maps a member's position to its value.
     public enum ItemLossStyle
     {
         None,
         DestroyNonWeaponArmor,
         DeathlinkBased,
-        DestroyAll
+        DestroyAll,
+        // Everything goes in the tombstone, then after respawning the player takes back a skill-scaled
+        // number of equipment pieces (Min/MaxEquipmentKept) from it. Nothing is destroyed.
+        ChooseEquipment
     }
 
     public enum ItemResults
@@ -425,18 +429,26 @@ public class DataObjects
                     sb.AppendLine(Localization.instance.Localize($"$equipment_kept <color={color_good}>{DeathStyle.minEquipmentKept}</color> - <color={color_good}>{DeathStyle.maxEquipmentKept}</color>"));
                     sb.AppendLine(Localization.instance.Localize($"$items_kept <color={color_good}>{DeathStyle.minItemsKept}</color> - <color={color_good}>{DeathStyle.maxItemsKept}</color>"));
                     break;
+                case ItemLossStyle.ChooseEquipment:
+                    // Nothing is destroyed, so no skulls.
+                    sb.AppendLine(Localization.instance.Localize($"$choose_equipment_desc"));
+                    sb.AppendLine(Localization.instance.Localize($"$equipment_picks <color={color_good}>{DeathStyle.minEquipmentKept}</color> - <color={color_good}>{DeathStyle.maxEquipmentKept}</color>"));
+                    break;
             }
             //sb.AppendLine();
             if (DeathStyle.itemLossStyle != ItemLossStyle.DestroyAll) {
-                if (DeathStyle.itemSavedStyle == ItemSavedStyle.OnCharacter) {
-                    sb.AppendLine(Localization.instance.Localize($"$saved_to_character"));
-                } else {
-                    sb.AppendLine(Localization.instance.Localize($"$saved_to_tombstone"));
-                }
-                if (DeathStyle.equipmentSavedStyle == EquipmentSavedStyle.OnCharacter) {
-                    sb.AppendLine(Localization.instance.Localize($"$equipment_saved_to_character"));
-                } else if (DeathStyle.equipmentSavedStyle == EquipmentSavedStyle.Tombstone) {
-                    sb.AppendLine(Localization.instance.Localize($"$equipment_saved_to_tombstone"));
+                // ChooseEquipment decides where everything goes on its own, so these lines would contradict it.
+                if (DeathStyle.itemLossStyle != ItemLossStyle.ChooseEquipment) {
+                    if (DeathStyle.itemSavedStyle == ItemSavedStyle.OnCharacter) {
+                        sb.AppendLine(Localization.instance.Localize($"$saved_to_character"));
+                    } else {
+                        sb.AppendLine(Localization.instance.Localize($"$saved_to_tombstone"));
+                    }
+                    if (DeathStyle.equipmentSavedStyle == EquipmentSavedStyle.OnCharacter) {
+                        sb.AppendLine(Localization.instance.Localize($"$equipment_saved_to_character"));
+                    } else if (DeathStyle.equipmentSavedStyle == EquipmentSavedStyle.Tombstone) {
+                        sb.AppendLine(Localization.instance.Localize($"$equipment_saved_to_tombstone"));
+                    }
                 }
                 if (DeathStyle.nonSkillCheckedItemAction == NonSkillCheckedItemAction.Tombstone) {
                     sb.AppendLine(Localization.instance.Localize($"$non_skill_items_tombstone"));
