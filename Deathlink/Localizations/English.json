@@ -1,4 +1,8 @@
 {
+  "modquickconfig_button": "Mod Config",
+  "modquickconfig_list_title": "Configure a mod",
+  "modquickconfig_no_matches": "No matches",
+  "modquickconfig_more_matches": "... $1 more, type to narrow",
   "dl_cfg_title": "Deathlink - Death Choices",
   "dl_cfg_levels": "Death levels",
   "dl_cfg_noselection": "Select a death level on the left, or add one.",
@@ -115,7 +119,6 @@
   "choose_equipment_desc": "Everything goes to your tombstone. After respawning, you choose some of your gear to take back.",
   "equipment_picks": "Gear you can take back",
   "leaderboard": "Leaderboard",
-  "leaderboard_page_hint": "Select the Leaderboard page to view server rankings.",
   "leaderboard_survival": "Survival",
   "leaderboard_combat": "Combat",
   "leaderboard_gathering": "Gathering",

@@ -1,9 +1,7 @@
 using Deathlink.Common;
 using HarmonyLib;
-using Jotunn.Entities;
 using Jotunn.Managers;
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -20,39 +18,36 @@ namespace Deathlink.Death
     /// <item><c>ChooseEquipment</c>. Everything goes in the tombstone when the player dies. Chosen
     /// equipment is pulled back out of the tombstone; the rest stays there.</item>
     /// </list>
-    /// On respawn the player gets a one-time message, and the selection panel is shown when they open
-    /// their inventory (a context where input handling and the cursor already work, unlike the raw
-    /// respawn moment).
     /// </summary>
     internal static class DeathSavingOptions
     {
         private enum ChoiceKind { KeepItems, TombstoneEquipment }
 
-        // How a tombstone pull went. Crosses the wire as an int, so only ever append.
+        // Crosses the wire as an int, so only ever append.
         private enum PullStatus { Pulled, InUse, Gone, NotYours, Unreadable }
 
-        // Candidate items captured at death. For KeepItems these are the originals, held as plain
-        // references across the death->respawn boundary: the ItemData objects outlive the destroyed
-        // player GameObject, so re-adding them to the freshly spawned inventory restores them intact.
-        // For TombstoneEquipment they are display copies; the real items are in the tombstone.
+        // For KeepItems these are the originals: the ItemData objects outlive the destroyed player
+        // GameObject, so re-adding them to the respawned inventory restores them intact. For
+        // TombstoneEquipment they are display copies; the real items are in the tombstone.
         private static readonly List<ItemDrop.ItemData> deathItems = new List<ItemDrop.ItemData>();
-        // Total items kept (picks + random fill); equals the DeathlinkBased "numberOfItemsSavable".
+        // Picks plus random fill.
         private static int totalToSave = 0;
-        // How many items the player may hand-pick (X), already clamped to [0, totalToSave].
         private static int maxChoices = 0;
-        // True between death and the player resolving the selection panel.
         private static bool pendingChoice = false;
         private static ChoiceKind pendingKind = ChoiceKind.KeepItems;
-        // The character the choice belongs to. These statics outlive a logout, so without this the next
-        // character loaded would be offered, and handed, the previous one's items.
+        // These statics outlive a logout, so without this the next character loaded would be offered,
+        // and handed, the previous one's items.
         private static long choiceOwnerId = 0L;
+        private const string PendingKeepKey = "DL_PendingKeepChoice";
 
-        // --- TombstoneEquipment only ---
         private static ZDOID choiceTombstone = ZDOID.None;
         // Each display copy's slot in the tombstone, which is how the real item is found again. Kept
         // apart from the copies because the selection panel lays them out through m_gridPos.
         private static readonly Dictionary<ItemDrop.ItemData, Vector2i> tombstoneSlots = new Dictionary<ItemDrop.ItemData, Vector2i>();
-        private static CustomRPC pullRPC;
+        // GUID-prefixed: every connection has one table of RPC name hashes, shared with vanilla and every
+        // other mod, and a second Register under the same hash silently replaces the first.
+        private const string PullRequestRpc = Deathlink.PluginGUID + ".GravePullRequest";
+        private const string PullResultRpc = Deathlink.PluginGUID + ".GravePullResult";
         // Never reset, so a reply to an earlier request can always be told apart from the current one.
         private static int pullRequest = 0;
         private static int pullRequestedCount = 0;
@@ -62,17 +57,7 @@ namespace Deathlink.Death
         // Pulled gear that has not reached an inventory yet: a reply can land while the player is dead.
         private static readonly List<ItemDrop.ItemData> undelivered = new List<ItemDrop.ItemData>();
 
-        internal static void SetupRPC()
-        {
-            pullRPC = NetworkManager.Instance.AddRPC("DEATHLK_GRAVEPULL", OnServerReceivePull, OnClientReceivePull);
-        }
-
-        /// <summary>
-        /// Records the death inventory and the save budget so the selection panel can be shown when
-        /// the player next opens their inventory. Called from <see cref="OnDeathChanges"/> after the
-        /// candidate items have already been removed from the player's inventory.
-        /// </summary>
-        public static void CaptureDeathChoice(List<ItemDrop.ItemData> candidateItems, int totalKept, int choiceCount)
+        public static void CaptureDeathChoice(Player player, List<ItemDrop.ItemData> candidateItems, int totalKept, int choiceCount)
         {
             ResetChoice();
             deathItems.AddRange(candidateItems);
@@ -81,13 +66,63 @@ namespace Deathlink.Death
             pendingKind = ChoiceKind.KeepItems;
             choiceOwnerId = LocalPlayerId();
             pendingChoice = true;
+            SaveKeepChoice(player);
             Logger.LogDebug($"Captured {deathItems.Count} death items for choice, keep {totalToSave}, pick up to {maxChoices}.");
         }
 
-        /// <summary>
-        /// Records a ChooseEquipment death. Called from <see cref="OnDeathChanges"/> once the equipment
-        /// is in the tombstone, so each piece's m_gridPos is its slot there.
-        /// </summary>
+        // The candidates were taken out of the inventory at death and exist nowhere else, so they are
+        // also written to the character: a quit or crash before Confirm would otherwise lose them all.
+        private static void SaveKeepChoice(Player player)
+        {
+            if (player == null) { return; }
+            player.m_customData[PendingKeepKey] = $"{totalToSave};{maxChoices};{Convert.ToBase64String(SerializeItems(deathItems))}";
+        }
+
+        private static void ClearSavedKeepChoice()
+        {
+            if (Player.m_localPlayer != null) { Player.m_localPlayer.m_customData.Remove(PendingKeepKey); }
+        }
+
+        // Every spawn loads the character again, so this also runs after each respawn and simply
+        // rebuilds the same choice from the saved copy.
+        [HarmonyPatch(typeof(Player), nameof(Player.Load))]
+        public static class RestoreKeepChoice
+        {
+            public static void Postfix(Player __instance)
+            {
+                if (__instance != Player.m_localPlayer) { return; }
+                if (!__instance.m_customData.TryGetValue(PendingKeepKey, out string saved)) { return; }
+                string[] parts = saved.Split(new[] { ';' }, 3);
+                Inventory items = null;
+                if (parts.Length == 3 && int.TryParse(parts[0], out int total) && int.TryParse(parts[1], out int choices)) {
+                    try {
+                        items = LoadDetached(Convert.FromBase64String(parts[2]), requireAll: false);
+                    } catch (FormatException) { }
+                    if (items != null) {
+                        ResetChoice();
+                        deathItems.AddRange(items.m_inventory);
+                        totalToSave = total;
+                        maxChoices = choices;
+                        pendingKind = ChoiceKind.KeepItems;
+                        choiceOwnerId = __instance.GetPlayerID();
+                        pendingChoice = true;
+                        Logger.LogDebug($"Restored an unfinished death item choice of {deathItems.Count} items.");
+                        return;
+                    }
+                }
+                Logger.LogWarning("Could not read this character's unfinished death item choice, it was dropped.");
+                __instance.m_customData.Remove(PendingKeepKey);
+            }
+        }
+
+        // A second death before the first choice was made: resolve that one at random, as if Confirm
+        // had been pressed with nothing picked, so this death decides those items along with the rest.
+        internal static void ResolveUnchosenKeepItems()
+        {
+            if (ChoiceIsForLocalPlayer() && pendingKind == ChoiceKind.KeepItems) { ApplySelection(null); }
+        }
+
+        // Called once the equipment is in the tombstone, so each piece's m_gridPos is its slot there.
         public static void CaptureEquipmentChoice(ZDOID tombstone, long ownerId, List<ItemDrop.ItemData> equipment, int choiceCount)
         {
             ResetChoice();
@@ -107,6 +142,7 @@ namespace Deathlink.Death
 
         private static void ResetChoice()
         {
+            if (pendingChoice && pendingKind == ChoiceKind.KeepItems && choiceOwnerId == LocalPlayerId()) { ClearSavedKeepChoice(); }
             deathItems.Clear();
             tombstoneSlots.Clear();
             totalToSave = 0;
@@ -145,12 +181,10 @@ namespace Deathlink.Death
                 if (__instance == null || __instance != Player.m_localPlayer) { return; }
                 DeliverPulledItems();
                 if (!ChoiceIsForLocalPlayer()) { return; }
-                string message = pendingKind == ChoiceKind.TombstoneEquipment ? "$dso_equip_spawn_message" : "$dso_spawn_message";
-                __instance.Message(MessageHud.MessageType.Center, Localization.instance.Localize(message));
+                ShowMessage(pendingKind == ChoiceKind.TombstoneEquipment ? "$dso_equip_spawn_message" : "$dso_spawn_message");
             }
         }
 
-        // Show the panel when the inventory opens (mirrors DeathChoiceEnable.ShowDeathChoiceUI).
         [HarmonyPatch(typeof(InventoryGui), nameof(InventoryGui.Show))]
         public static class ShowSaveChoiceUI
         {
@@ -182,8 +216,7 @@ namespace Deathlink.Death
             }
         }
 
-        // Hide the panel when the inventory closes, but leave the choice pending so it re-appears on
-        // the next open until the player confirms.
+        // The choice stays pending, so the panel comes back on every inventory open until Confirm.
         [HarmonyPatch(typeof(InventoryGui), nameof(InventoryGui.Hide))]
         public static class HideSaveChoiceUI
         {
@@ -201,10 +234,6 @@ namespace Deathlink.Death
             return true;
         }
 
-        /// <summary>
-        /// Applies the player's selection: the picked items plus a random fill (from the unpicked
-        /// remainder) up to the total keep-budget are returned to the player, the rest discarded.
-        /// </summary>
         private static void ApplySelection(List<ItemDrop.ItemData> picked)
         {
             Player player = Player.m_localPlayer;
@@ -215,7 +244,6 @@ namespace Deathlink.Death
                 }
             }
 
-            // Fill any remaining budget with random items the player did not pick.
             if (saved.Count < totalToSave) {
                 List<ItemDrop.ItemData> remainder = Deathlink.shuffleList(deathItems.Where(i => !saved.Contains(i)).ToList());
                 foreach (var item in remainder) {
@@ -225,13 +253,7 @@ namespace Deathlink.Death
             }
 
             if (player != null) {
-                foreach (var item in saved) {
-                    // The captured items may still carry the equipped flag from the pre-death player;
-                    // the respawned player does not reference them, so clear it to avoid a desynced
-                    // "equipped but inactive" state. The player re-equips manually, like grave loot.
-                    item.m_equipped = false;
-                    player.m_inventory.AddItem(item);
-                }
+                foreach (var item in saved) { GiveOrDrop(player, item); }
                 Logger.LogDebug($"Returned {saved.Count} items to the player after death choice.");
             } else {
                 Logger.LogWarning("Local player missing while applying death choice, saved items were lost.");
@@ -240,14 +262,42 @@ namespace Deathlink.Death
             ResetChoice();
         }
 
-        // --- Pulling picked equipment out of the tombstone ---------------------------------------
-        //
-        // The pull runs wherever the authoritative copy of the tombstone lives: the server, or this
-        // machine when it is one. This client's copy goes stale the moment anyone else touches the
-        // tombstone, and editing a stale copy either loses the edit or overwrites theirs -- duplicating
-        // the picks or bringing back items that were already looted.
+        // The items may still carry the equipped flag from the pre-death player, which the respawned
+        // player does not reference, so it is cleared to avoid an "equipped but inactive" item.
+        private static void GiveOrDrop(Player player, ItemDrop.ItemData item)
+        {
+            item.m_equipped = false;
+            if (player.GetInventory().AddItem(item)) { return; }
+            // Only when the inventory filled up after the choice was made.
+            ItemDrop.DropItem(item, 0, player.transform.position + player.transform.forward + Vector3.up, Quaternion.identity);
+        }
 
-        // False keeps the panel open.
+        // The pull runs where the authoritative copy of the tombstone lives (the server, or this machine
+        // when it is one): this client's copy goes stale the moment anyone else touches the tombstone, and
+        // editing a stale copy either loses the edit or overwrites theirs.
+        //
+        // Both hops use the peer connection itself (ZNetPeer.m_rpc), never ZRoutedRpc, which is what
+        // Jotunn's CustomRPC is built on. A routed RPC's sender id is written by the sending client and
+        // can be addressed to any peer, so another client could hand a player items as if the server had,
+        // or have the reply go elsewhere. A ZRpc handler is bound to the socket the call arrived on. Which
+        // grave a client may pull from still rests on the player id on its own character, which a modified
+        // client controls -- no worse than vanilla, where anyone can open any tombstone.
+
+        // ZNet registers its own per-connection RPCs here, on both ends of every connection: on the
+        // server once per client, and on a client once, for its link to the server.
+        [HarmonyPatch(typeof(ZNet), "OnNewConnection")]
+        public static class RegisterPullRpcs
+        {
+            public static void Postfix(ZNet __instance, ZNetPeer peer)
+            {
+                if (__instance.IsServer()) {
+                    peer.m_rpc.Register<ZPackage>(PullRequestRpc, OnServerReceivePull);
+                } else {
+                    peer.m_rpc.Register<ZPackage>(PullResultRpc, OnClientReceivePull);
+                }
+            }
+        }
+
         private static bool RequestTombstonePull(List<ItemDrop.ItemData> picked)
         {
             Player player = Player.m_localPlayer;
@@ -283,12 +333,13 @@ namespace Deathlink.Death
                 return true;
             }
 
-            if (pullRPC == null || ZRoutedRpc.instance == null) { return false; }
+            ZRpc server = ZNet.instance.GetServerRPC();
+            if (server == null) { return false; }
             ZPackage package = new ZPackage();
             package.Write(pullRequest);
             package.Write(choiceTombstone);
             package.Write(pickData);
-            pullRPC.SendPackage(ZRoutedRpc.instance.GetServerPeerID(), package);
+            server.Invoke(PullRequestRpc, package);
             awaitingPull = true;
             pullSentAt = Time.realtimeSinceStartup;
             return true;
@@ -334,26 +385,28 @@ namespace Deathlink.Death
             return PullStatus.Pulled;
         }
 
-        private static IEnumerator OnServerReceivePull(long sender, ZPackage package)
+        private static void OnServerReceivePull(ZRpc rpc, ZPackage package)
         {
+            ZNetPeer requester = ZNet.instance.GetPeer(rpc);
+            if (requester == null) { return; }
             try {
                 int request = package.ReadInt();
                 ZDOID tombstone = package.ReadZDOID();
                 byte[] pickData = package.ReadByteArray();
-                PullStatus status = PullFromTombstone(tombstone, PlayerIdOfPeer(sender), pickData,
+                PullStatus status = PullFromTombstone(tombstone, Common.Utils.PlayerIdOfPeer(requester), pickData,
                     new List<ItemDrop.ItemData>(), out byte[] pulledData);
                 ZPackage reply = new ZPackage();
                 reply.Write(request);
                 reply.Write((int)status);
                 reply.Write(pulledData);
-                pullRPC.SendPackage(sender, reply);
+                rpc.Invoke(PullResultRpc, reply);
             } catch (Exception e) {
-                Logger.LogWarning($"Failed to handle a tombstone pull from {sender}: {e}");
+                Logger.LogWarning($"Failed to handle a tombstone pull from {requester.m_playerName} ({requester.m_uid}): {e}");
             }
-            yield return null;
         }
 
-        private static IEnumerator OnClientReceivePull(long sender, ZPackage package)
+        // Registered only on the connection to the server, so it can only ever come from there.
+        private static void OnClientReceivePull(ZRpc rpc, ZPackage package)
         {
             try {
                 int request = package.ReadInt();
@@ -364,7 +417,6 @@ namespace Deathlink.Death
             } catch (Exception e) {
                 Logger.LogWarning($"Failed to read the tombstone pull reply: {e}");
             }
-            yield return null;
         }
 
         private static void ApplyPullResult(int request, PullStatus status, List<ItemDrop.ItemData> pulled)
@@ -402,23 +454,9 @@ namespace Deathlink.Death
             Player player = Player.m_localPlayer;
             // Added to a dying player they would vanish with the body, so wait for the respawn.
             if (player == null || player.IsDead() || undelivered.Count == 0) { return; }
-            foreach (ItemDrop.ItemData item in undelivered) {
-                item.m_equipped = false;
-                if (player.GetInventory().AddItem(item)) { continue; }
-                // Only when the inventory filled up between Confirm's space check and the reply.
-                ItemDrop.DropItem(item, 0, player.transform.position + player.transform.forward + Vector3.up, Quaternion.identity);
-            }
+            foreach (ItemDrop.ItemData item in undelivered) { GiveOrDrop(player, item); }
             Logger.LogDebug($"Handed over {undelivered.Count} items pulled from the tombstone.");
             undelivered.Clear();
-        }
-
-        // The character the peer is currently playing, read from its own ZDO. Zero when unresolved.
-        private static long PlayerIdOfPeer(long peerId)
-        {
-            ZNetPeer peer = ZNet.instance != null ? ZNet.instance.GetPeer(peerId) : null;
-            if (peer == null) { return 0L; }
-            ZDO character = ZDOMan.instance.GetZDO(peer.m_characterID);
-            return character != null ? character.GetLong(ZDOVars.s_playerID, 0L) : 0L;
         }
 
         // Durability is left out: a save rounds it, and the fields below already tell pieces apart.
@@ -478,13 +516,9 @@ namespace Deathlink.Death
         }
 
         /// <summary>
-        /// Persistent overlay panel that shows the death inventory as a real Valheim item grid and
-        /// lets the player toggle up to <c>maxChoices</c> items to keep. Items are rendered by a
-        /// cloned <see cref="InventoryGrid"/> driven from a temporary <see cref="Inventory"/>, so the
-        /// slots get their full standard icon/tooltip and any slot-decorating mod (e.g. EpicLoot,
-        /// which patches <c>InventoryGrid.UpdateGui</c>) styles them exactly as in the real
-        /// inventory. Mirrors <see cref="DeathChoices.DeathChoiceUI"/>: a DontDestroyOnLoad singleton
-        /// so the panel survives world reloads and never duplicates.
+        /// Shows the death items in a clone of a vanilla <see cref="InventoryGrid"/>, so slots get the
+        /// standard icons and tooltips, and slot-decorating mods (EpicLoot patches
+        /// <c>InventoryGrid.UpdateGui</c>) style them as in the real inventory.
         /// </summary>
         public class SaveChoiceUI : MonoBehaviour
         {
@@ -509,16 +543,13 @@ namespace Deathlink.Death
             private static Text descriptionText;
             private static Text counterText;
 
-            // Cloned vanilla grid + the temp inventory that backs it.
             private static InventoryGrid grid;
             private static RectTransform gridRoot;
             private static Inventory tempInv;
-            private static bool selectionWired;
 
             private static readonly HashSet<ItemDrop.ItemData> selected = new HashSet<ItemDrop.ItemData>();
             private static int keepBudget = 0;
             private static int pickLimit = 0;
-            // KeepItems tops the picks up with random items; a tombstone pick takes exactly what was picked.
             private static bool fillsAtRandom = true;
 
             public void Awake()
@@ -530,10 +561,8 @@ namespace Deathlink.Death
             // mods re-apply, exactly like InventoryGui does for the real grids.
             public void Update()
             {
-                if (panel == null || !panel.activeSelf) { return; }
-                if (grid == null || tempInv == null) { return; }
-                // player == null: suppresses the row-0 hotbar binding numbers and equipped markers,
-                // which are meaningless for detached death loot. Tooltips/decoration don't need it.
+                if (panel == null || !panel.activeSelf || grid == null || tempInv == null) { return; }
+                // A null player hides the hotbar binding numbers and equipped markers.
                 grid.UpdateInventory(tempInv, null, null);
             }
 
@@ -548,11 +577,8 @@ namespace Deathlink.Death
                 descriptionText.text = Localization.instance.Localize(fromTombstone ? "$dso_equip_description" : "$dso_description");
                 selected.Clear();
                 BuildInventory(items);
-                grid.UpdateInventory(tempInv, null, null); // build/refresh slot elements now
-                grid.ResetView();                          // position gridRoot like the vanilla container
-                Logger.LogDebug($"SaveChoiceUI grid: {tempInv.GetWidth()}x{tempInv.GetHeight()}, " +
-                    $"slot elements={(gridRoot != null ? gridRoot.childCount : -1)}, " +
-                    $"gridRect={((RectTransform)grid.transform).rect.size}");
+                grid.UpdateInventory(tempInv, null, null);
+                grid.ResetView();
                 ClearHighlights();
                 UpdateCounter();
                 panel.SetActive(true);
@@ -560,8 +586,6 @@ namespace Deathlink.Death
 
             public void Hide()
             {
-                // Only hides the overlay; the choice stays pending until Confirm resolves it, so it
-                // re-appears the next time the inventory is opened.
                 if (panel != null) { panel.SetActive(false); }
             }
 
@@ -652,10 +676,7 @@ namespace Deathlink.Death
                 return true;
             }
 
-            // Clones a fully-wired vanilla grid (the container grid: no hotbar binding row) into the
-            // panel and hooks click-to-select. The clone keeps the serialized wiring (element prefab,
-            // grid root, ui group, tooltip anchor); the runtime m_onSelected delegate is not
-            // serialized, so we add our own.
+            // Clones the container grid because, unlike the player grid, it has no hotbar binding row.
             private bool EnsureGrid()
             {
                 if (grid != null) { return true; }
@@ -681,7 +702,6 @@ namespace Deathlink.Death
                 clone.name = "DL_SaveGrid";
                 clone.SetActive(true);
 
-                // Stretch-fill the holder so the grid's rect matches it (mimics the vanilla viewport).
                 var rt = (RectTransform)clone.transform;
                 rt.localScale = Vector3.one;
                 rt.localRotation = Quaternion.identity;
@@ -692,31 +712,28 @@ namespace Deathlink.Death
 
                 grid = clone.GetComponent<InventoryGrid>();
                 gridRoot = grid.m_gridRoot;
-                if (gridRoot != null) { gridRoot.gameObject.SetActive(true); }
-
                 // Force a clean element rebuild on the first UpdateGui and drop any stale slot GOs the
                 // source grid may have had from a previously opened container.
                 if (gridRoot != null) {
+                    gridRoot.gameObject.SetActive(true);
                     foreach (Transform child in gridRoot) { Destroy(child.gameObject); }
                 }
                 grid.m_width = 0;
                 grid.m_height = 0;
 
-                if (!selectionWired) {
-                    grid.m_onSelected += (g, item, pos, mod) => OnItemClicked(item, pos);
-                    grid.m_onRightClick += (g, item, pos) => { };
-                    // UpdateGui invokes this Func unguarded for every item and Instantiate does
-                    // not copy runtime delegates, so the clone's is null and the first non-empty
-                    // refresh throws. Nothing is draggable in this panel, so nothing accepts a drop.
-                    grid.CanDropDragOntoItem = item => false;
-                    selectionWired = true;
-                }
+                // Wired on every new clone: the panel lives under CustomGUIFront, which is rebuilt with
+                // each world load, and Instantiate does not copy runtime delegates.
+                grid.m_onSelected += (g, item, pos, mod) => OnItemClicked(item, pos);
+                // Both are called without a null check: m_onRightClick on a right-click, and
+                // CanDropDragOntoItem by UpdateGui for every item, so a null one throws on the first
+                // non-empty refresh. Nothing is draggable in this panel, so nothing accepts a drop.
+                grid.m_onRightClick += (g, item, pos) => { };
+                grid.CanDropDragOntoItem = item => false;
                 return true;
             }
 
-            // Places each captured item in its own slot of a temp inventory. Items are added to the
-            // backing list directly (not via AddItem) so distinct stacks are never merged and the
-            // exact ItemData references are preserved for selection mapping.
+            // Added to the backing list directly rather than through AddItem, so stacks are never merged
+            // and the selection keeps the exact ItemData references.
             private void BuildInventory(List<ItemDrop.ItemData> items)
             {
                 int count = Mathf.Max(1, items.Count);
@@ -739,16 +756,15 @@ namespace Deathlink.Death
                     selected.Remove(item);
                     SetHighlight(pos, false);
                 } else {
-                    if (selected.Count >= pickLimit) { return; } // at the pick cap
+                    if (selected.Count >= pickLimit) { return; }
                     selected.Add(item);
                     SetHighlight(pos, true);
                 }
                 UpdateCounter();
             }
 
-            // Toggles a translucent overlay on the slot at the given grid position. Elements are
-            // created row-major under gridRoot, so index = y*width + x. The overlay is a non-raycast
-            // child that UpdateGui never touches, so it survives the per-frame refresh.
+            // Slot elements are created row-major under gridRoot. UpdateGui never touches this overlay
+            // child, so it survives the per-frame refresh.
             private void SetHighlight(Vector2i pos, bool on)
             {
                 if (gridRoot == null) { return; }

@@ -1,21 +1,17 @@
 using Deathlink.Common;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using static Deathlink.Common.DataObjects;
 
 namespace Deathlink.Death
 {
     // The staged, editable copy of DeathChoices.yaml that the editor panel works on.
-    //
-    // Kept free of Unity types on purpose: the key operations below are the part worth being able to read
-    // and reason about, and burying them in panel-building code is how StarLevelSystem's equivalent grew
-    // to 1250 lines.
     internal sealed class DeathChoiceEditorModel
     {
         internal Dictionary<string, DeathChoiceLevel> Levels = new Dictionary<string, DeathChoiceLevel>();
 
-        // Explicit key order. A rename is remove-then-add, and a plain Dictionary would drop the level at
-        // the end of the file every time -- which quietly reshuffles an admin's carefully ordered config.
+        // A rename is remove-then-add, which would move the level to the end of a plain Dictionary.
         internal List<string> Order = new List<string>();
 
         internal string SelectedKey;
@@ -24,21 +20,8 @@ namespace Deathlink.Death
         // server's copy moved underneath a long edit.
         internal DateTime BaseLoadedUtc;
 
-        private static YamlFormat Format {
-            get {
-                YamlConfigFile<Dictionary<string, DeathChoiceLevel>> file = YamlConfigManager.DeathChoices;
-                return file != null ? file.EffectiveFormat : YamlFormat.Default;
-            }
-        }
-
-        // Deep-copies the live levels through a serialize/deserialize round trip.
-        //
-        // This is the ONLY way the editor may obtain its working set, and the round trip is doing three
-        // jobs at once: the editor never touches an object the rest of the mod is reading; the private
-        // lazy caches on DeathChoiceLevel (CalculatedResourceMods, KillLootModifiers, CalculatedSkillMods
-        // and their *Cached flags) are populated on first use and NEVER invalidated, so a level mutated in
-        // place would keep serving pre-edit values for the rest of the session; and the copy is faithful,
-        // because every non-default initializer in DataObjects carries [DefaultValue].
+        // The editor must only ever work on a copy: DeathChoiceLevel's lazy caches are never invalidated,
+        // so a live level edited in place would keep serving its pre-edit values.
         internal static DeathChoiceEditorModel Snapshot() {
             DeathChoiceEditorModel model = new DeathChoiceEditorModel();
             YamlConfigFile<Dictionary<string, DeathChoiceLevel>> file = YamlConfigManager.DeathChoices;
@@ -46,9 +29,7 @@ namespace Deathlink.Death
             Dictionary<string, DeathChoiceLevel> copy = null;
             if (file != null && file.Value != null) {
                 try {
-                    YamlFormat format = file.EffectiveFormat;
-                    copy = format.Deserializer.Deserialize<Dictionary<string, DeathChoiceLevel>>(
-                        format.Serializer.Serialize(file.Value));
+                    copy = DeepCopy(file.Value);
                 } catch (Exception e) {
                     Logger.LogError($"Could not copy the death levels for editing: {e.Message}");
                 }
@@ -61,8 +42,7 @@ namespace Deathlink.Death
             return model;
         }
 
-        // message carries the reason on failure, and occasionally a note on success -- deleting the
-        // fallback level moves it and says where.
+        // message carries the reason on failure, and sometimes a note on success.
         internal bool TryAdd(string key, out string message) {
             key = (key ?? "").Trim();
             if (IsUsableKey(key, out message) == false) { return false; }
@@ -135,8 +115,7 @@ namespace Deathlink.Death
 
             DeathChoiceLevel copy;
             try {
-                YamlFormat format = Format;
-                copy = format.Deserializer.Deserialize<DeathChoiceLevel>(format.Serializer.Serialize(Levels[key]));
+                copy = DeepCopy(Levels[key]);
             } catch (Exception e) {
                 Logger.LogError($"Could not duplicate '{key}': {e.Message}");
                 return null;
@@ -146,7 +125,7 @@ namespace Deathlink.Death
             // Only one level may be the fallback, and the original already is if anything is.
             copy.Fallback = false;
 
-            string newKey = UniqueKey(key + "Copy");
+            string newKey = UniqueKey(Levels.Keys, key + "Copy");
             Levels[newKey] = copy;
             int index = Order.IndexOf(key);
             if (index >= 0) { Order.Insert(index + 1, newKey); } else { Order.Add(newKey); }
@@ -168,8 +147,7 @@ namespace Deathlink.Death
             foreach (string key in Order) {
                 if (Levels.TryGetValue(key, out DeathChoiceLevel level)) { ordered[key] = level; }
             }
-            // Anything that somehow escaped Order still gets written -- losing a level to a bookkeeping
-            // slip would be far worse than an out-of-place one.
+            // Anything missing from Order is still written: a lost level is far worse than a misplaced one.
             foreach (KeyValuePair<string, DeathChoiceLevel> pair in Levels) {
                 if (ordered.ContainsKey(pair.Key) == false) { ordered[pair.Key] = pair.Value; }
             }
@@ -194,6 +172,11 @@ namespace Deathlink.Death
                 message = "A level name cannot contain ':' or '#', or start with '-'.";
                 return false;
             }
+            // The game stores a character's choice as "key value" and splits it on the first space.
+            if (key.Any(char.IsWhiteSpace)) {
+                message = "A level name cannot contain spaces.";
+                return false;
+            }
             return true;
         }
 
@@ -209,13 +192,19 @@ namespace Deathlink.Death
             return null;
         }
 
-        private string UniqueKey(string candidate) {
-            if (Levels.ContainsKey(candidate) == false) { return candidate; }
+        internal static string UniqueKey(ICollection<string> existing, string candidate) {
+            if (existing.Contains(candidate) == false) { return candidate; }
             for (int i = 2; i < 1000; i++) {
                 string attempt = candidate + i;
-                if (Levels.ContainsKey(attempt) == false) { return attempt; }
+                if (existing.Contains(attempt) == false) { return attempt; }
             }
             return candidate + Guid.NewGuid().ToString("N").Substring(0, 4);
+        }
+
+        private static T DeepCopy<T>(T value) {
+            YamlConfigFile<Dictionary<string, DeathChoiceLevel>> file = YamlConfigManager.DeathChoices;
+            YamlFormat format = file != null ? file.EffectiveFormat : YamlFormat.Default;
+            return format.Deserializer.Deserialize<T>(format.Serializer.Serialize(value));
         }
     }
 }

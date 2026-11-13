@@ -1,7 +1,5 @@
 ﻿using BepInEx.Logging;
 using Deathlink.Common;
-using System;
-
 
 namespace Deathlink
 {
@@ -9,29 +7,12 @@ namespace Deathlink
     {
         public static LogLevel Level = LogLevel.Info;
 
-        public static void enableDebugLogging(object sender, EventArgs e)
-        {
-            if (ValConfig.EnableDebugMode.Value)
-            {
-                Level = LogLevel.Debug;
-            }
-            else
-            {
-                Level = LogLevel.Info;
-            }
-            // set log level
-        }
+        // For hot paths: check this before building a debug message, which otherwise costs even when nothing is logged.
+        public static bool IsDebug => Level >= LogLevel.Debug;
 
-        public static void CheckEnableDebugLogging()
+        public static void UpdateLogLevel()
         {
-            if (ValConfig.EnableDebugMode.Value)
-            {
-                Level = LogLevel.Debug;
-            }
-            else
-            {
-                Level = LogLevel.Info;
-            }
+            Level = ValConfig.EnableDebugMode.Value ? LogLevel.Debug : LogLevel.Info;
         }
 
         public static void LogDebug(string message)

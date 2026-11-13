@@ -1,7 +1,5 @@
-using Deathlink.Common;
 using HarmonyLib;
 using Jotunn.Managers;
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -10,11 +8,6 @@ using static Deathlink.Common.DataObjects;
 
 namespace Deathlink.Death
 {
-    /// <summary>
-    /// Custom overlay panel showing the server leaderboard with three switchable views
-    /// (Survival / Combat / Gathering). Shown while the "Leaderboard" page is selected in the
-    /// Trophies/Compendium TextsDialog. Built with Jotunn's GUIManager, mirroring DeathChoiceUI.
-    /// </summary>
     public static class LeaderboardUI
     {
         private const int ViewSurvival = 0;
@@ -22,7 +15,7 @@ namespace Deathlink.Death
         private const int ViewGathering = 2;
 
         private static GameObject panel;
-        private static GameObject content;            // scroll content the rows live under
+        private static GameObject content;
         private static readonly List<GameObject> rows = new List<GameObject>();
         private static readonly Text[] headerCols = new Text[5];
         private static int currentView = ViewSurvival;
@@ -39,19 +32,14 @@ namespace Deathlink.Death
             ( 340f, 140f), // stat 3
         };
 
-        // -----------------------------------------------------------------
-        // Public control surface (called from the TextsDialog patches below)
-        // -----------------------------------------------------------------
-
         public static bool IsVisible => panel != null && panel.activeSelf;
 
         public static void Show()
         {
             if (!EnsurePanel()) { return; }
             panel.SetActive(true);
-            // Show the currently cached board right away, then push our latest stats and pull the
-            // server's current state; the reply triggers RefreshIfVisible to repopulate with fresh data.
             PopulateView(currentView);
+            // The server's reply repopulates the board through RefreshIfVisible.
             LeaderboardData.RequestDashboardSync();
         }
 
@@ -65,14 +53,10 @@ namespace Deathlink.Death
             if (IsVisible) { PopulateView(currentView); }
         }
 
-        // -----------------------------------------------------------------
-        // Panel construction
-        // -----------------------------------------------------------------
-
         private static bool EnsurePanel()
         {
             if (panel != null) { return true; }
-            if (GUIManager.Instance == null || !GUIManager.CustomGUIFront) {
+            if (!GUIManager.CustomGUIFront) {
                 Logger.LogWarning("GUIManager not setup, skipping leaderboard panel creation.");
                 return false;
             }
@@ -116,7 +100,6 @@ namespace Deathlink.Death
             CreateViewButton("$leaderboard_combat", 0f, ViewCombat);
             CreateViewButton("$leaderboard_gathering", 230f, ViewGathering);
 
-            // Sticky column-header row above the scroll list.
             for (int i = 0; i < headerCols.Length; i++) {
                 headerCols[i] = CreateText(panel, new Vector2(columns[i].x, 200f), columns[i].w,
                     "", GUIManager.Instance.ValheimOrange, 18);
@@ -153,10 +136,6 @@ namespace Deathlink.Death
                 height: 44f);
             button.GetComponent<Button>().onClick.AddListener(() => PopulateView(view));
         }
-
-        // -----------------------------------------------------------------
-        // Population
-        // -----------------------------------------------------------------
 
         public static void PopulateView(int view)
         {
@@ -268,59 +247,6 @@ namespace Deathlink.Death
             return $"{Mathf.RoundToInt(seconds / 60f)}m";
         }
 
-        // -----------------------------------------------------------------
-        // Trophies/Compendium (TextsDialog) integration
-        // -----------------------------------------------------------------
-
-        private static GameObject leaderboardButton;
-        private static string DeathlinkSettingsTopic => Localization.instance.Localize("$deathlink_settings");
-
-        // Show a "Leaderboard" button on the Deathlink settings page, to the left of the close box
-        // (mirroring the "Change Death Choice" button that sits on the right). The overlay opens only
-        // when this button is clicked, never automatically, so there is no separate leaderboard page
-        // in the compendium list any more.
-        [HarmonyPatch(typeof(TextsDialog), nameof(TextsDialog.ShowText), new Type[] { typeof(TextsDialog.TextInfo) })]
-        public static class TextsDialog_ShowText_Leaderboard_Patch
-        {
-            public static void Postfix(TextsDialog __instance, TextsDialog.TextInfo text)
-            {
-                bool onSettingsPage = text != null && text.m_topic == DeathlinkSettingsTopic;
-                if (!ValConfig.EnableLeaderboard.Value || !onSettingsPage) {
-                    if (leaderboardButton != null) { leaderboardButton.SetActive(false); }
-                    return;
-                }
-
-                EnsureLeaderboardButton(__instance);
-                if (leaderboardButton != null) {
-                    leaderboardButton.SetActive(true);
-                    leaderboardButton.transform.SetAsLastSibling();
-                }
-            }
-
-            private static void EnsureLeaderboardButton(TextsDialog dialog)
-            {
-                if (leaderboardButton != null) { return; }
-                if (GUIManager.Instance == null) {
-                    Logger.LogWarning("GUIManager not setup, skipping leaderboard button creation.");
-                    return;
-                }
-
-                Transform closebuttonTF = dialog.transform.Find("Texts_frame/Closebutton");
-                if (closebuttonTF == null) { return; }
-
-                leaderboardButton = GUIManager.Instance.CreateButton(
-                    text: Localization.instance.Localize("$leaderboard"),
-                    parent: closebuttonTF,
-                    anchorMin: new Vector2(0.5f, 0.5f),
-                    anchorMax: new Vector2(0.5f, 0.5f),
-                    position: new Vector2(-250f, 0f),
-                    width: 200f,
-                    height: 40f);
-                leaderboardButton.GetComponent<Button>().onClick.AddListener(Show);
-            }
-        }
-
-        // Ensure the overlay is hidden when the dialog (or inventory) closes.
         [HarmonyPatch(typeof(TextsDialog), nameof(TextsDialog.OnClose))]
         public static class TextsDialog_OnClose_Leaderboard_Patch
         {

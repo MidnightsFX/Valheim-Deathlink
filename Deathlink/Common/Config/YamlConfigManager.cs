@@ -1,3 +1,4 @@
+using Deathlink.Common;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -125,13 +126,19 @@ namespace Deathlink.Common {
 
             // The exact bytes that were validated, so what is on disk is what was judged -- and the
             // documented header survives, because this goes through WriteRawToDisk.
-            WriteRawToDisk(file, yaml);
+            bool written = WriteRawToDisk(file, yaml);
 
             // Explicit, and required: WriteRawToDisk re-stamps the watcher so it will not see our own
-            // write, which means the watcher-driven broadcast never fires for this path.
+            // write, which means the watcher-driven broadcast never fires for this path. Peers get the
+            // applied text (LastAppliedText), not the disk, so this holds even when the write failed.
             ConfigNetwork.Broadcast(file);
 
             message = report.Warnings.Count == 0 ? "" : string.Join(" ", report.Warnings.ToArray());
+            // Still a success: the values are live here and on every peer. What failed is keeping them past a
+            // restart, which the editor has to hear about rather than a plain "saved".
+            if (written == false) {
+                message = ($"{file.FileName} is applied but could not be written to disk, so it reverts on restart. " + message).Trim();
+            }
             return true;
         }
 
@@ -147,6 +154,8 @@ namespace Deathlink.Common {
         }
 
         internal static void WriteCurrentToDisk(YamlConfigFile file) {
+            // Value has moved on from the text it was loaded from, so the sync serializes it from now on.
+            if (file != null) { file.LastAppliedText = null; }
             WriteRawToDisk(file, file?.SerializeCurrent());
         }
 
@@ -155,8 +164,10 @@ namespace Deathlink.Common {
         // The header is the only documentation of the schema an admin ever sees -- it is what tells them
         // which fields exist, what the enums accept and what the numbers mean. A bare write silently
         // deletes it and nobody notices until someone needs it.
-        internal static void WriteRawToDisk(YamlConfigFile file, string serializedYaml) {
-            if (file == null || string.IsNullOrEmpty(file.Path)) { return; }
+        //
+        // Returns false when nothing was written, so a caller that promises "saved" can tell.
+        internal static bool WriteRawToDisk(YamlConfigFile file, string serializedYaml) {
+            if (file == null || string.IsNullOrEmpty(file.Path)) { return false; }
 
             try {
                 Directory.CreateDirectory(Path.GetDirectoryName(file.Path));
@@ -167,8 +178,10 @@ namespace Deathlink.Common {
                     writer.WriteLine(StripLeadingHeader(serializedYaml, file.Header));
                 }
                 ConfigFileWatcher.RefreshStamp(file.Path);
+                return true;
             } catch (Exception e) {
                 Logger.LogError($"Could not write {file.FileName}: {e.Message}");
+                return false;
             }
         }
 
@@ -224,8 +237,8 @@ namespace Deathlink.Common {
         }
 
         // Re-run every file's validator against the values already loaded. Call this once the game state a
-        // validator depends on exists -- most often PrefabManager.OnPrefabsRegistered -- and whenever a
-        // BepInEx entry a validator cross-checks has changed.
+        // validator depends on exists, and whenever a BepInEx entry a validator cross-checks has changed.
+        // Validators waiting on the prefab table have RevalidatePrefabDependent instead.
         internal static void RevalidateAll() {
             for (int i = 0; i < Files.Count; i++) {
                 try {
@@ -264,11 +277,21 @@ namespace Deathlink.Common {
             return true;
         }
 
+        // Three steps, each caught on its own. One unusable file must not take Awake down with it -- and a
+        // load that throws must not take the file's sync and watcher down with it either: unregistered, the
+        // file never reached a joining client (who then ran on its own defaults) and fixing it on disk was
+        // never noticed.
         private static void Prepare(YamlConfigFile file) {
             try {
                 file.Path = Path.Combine(ConfigDirectory(file.SubFolder), file.FileName);
                 ByPath[file.Path] = file;
+            } catch (Exception e) {
+                // Without a path there is nothing to load, sync or watch.
+                Logger.LogError($"Could not prepare {file.FileName}: {e}");
+                return;
+            }
 
+            try {
                 if (File.Exists(file.Path) == false) {
                     Logger.LogDebug($"{file.FileName} missing, writing this mod's built-in defaults.");
                     RestoreDefaults(file);
@@ -279,18 +302,29 @@ namespace Deathlink.Common {
                 }
 
                 file.LoadFrom(File.Exists(file.Path) ? File.ReadAllText(file.Path) : "", ConfigOrigin.Startup);
+            } catch (Exception e) {
+                Logger.LogError($"Could not load {file.FileName}, using this mod's built-in defaults: {e}");
+            }
+            // A load that threw skipped the failure policy, so there may be no value at all yet.
+            try {
+                file.UseDefaultsIfUnloaded();
+            } catch (Exception e) {
+                Logger.LogError($"Could not apply the built-in defaults for {file.FileName}: {e}");
+            }
 
+            try {
                 ConfigNetwork.RegisterFile(file);
                 if (file.Watch) { ConfigFileWatcher.Register(file.Path, OnWatchedFileChanged); }
             } catch (Exception e) {
-                // One unusable file must not take Awake down with it -- every other config, and the rest
-                // of the mod, still loads.
-                Logger.LogError($"Could not prepare {file.FileName}: {e}");
+                Logger.LogError($"Could not register {file.FileName} for sync and file watching: {e}");
             }
         }
 
         private static void OnWatchedFileChanged(string path) {
             if (ByPath.TryGetValue(path, out YamlConfigFile file) == false) { return; }
+            // A connected client runs the server's copy of a server-authoritative file; its own file only
+            // comes back into play once it leaves.
+            if (file.Sync == ConfigSyncMode.ServerAuthoritative && ZNet.instance != null && ZNet.instance.IsServer() == false) { return; }
 
             // Debounced rather than reloaded straight off the poll: most editors save by truncating and
             // then writing, which the watcher sees as two separate changes, and a reload is not cheap

@@ -11,8 +11,8 @@ namespace Deathlink.Death;
 public static class DeathProgressionSkill
 {
     public static Skills.SkillType DeathSkill = 0;
-    private static float lastSkillIncreaseTickTime = 0f;
-    private static float timeSinceGameStart = 0;
+    private static long baselinePlayerId = 0L;
+    private static float nextTickTime = 0f;
     private static float _bossKills = 0f;
     private static float _enemykills = 0f;
     private static float _piecesBuilt = 0f;
@@ -25,7 +25,7 @@ public static class DeathProgressionSkill
         SkillConfig deathskill = new SkillConfig();
         deathskill.Name = LocalizationManager.Instance.TryTranslate("$death_skill");
         deathskill.Description = LocalizationManager.Instance.TryTranslate("$death_skill_description");
-        deathskill.Icon = Deathlink.EmbeddedResourceBundle.LoadAsset<Sprite>("Assets/Custom/Icons/death_skill.png"); ;
+        deathskill.Icon = Deathlink.EmbeddedResourceBundle.LoadAsset<Sprite>("Assets/Custom/Icons/death_skill.png");
         deathskill.Identifier = "midnightsfx.deathskill";
         deathskill.IncreaseStep = 0.1f;
         DeathSkill = SkillManager.Instance.AddSkill(deathskill);
@@ -34,115 +34,71 @@ public static class DeathProgressionSkill
         }
     }
 
-
-    public static float DeathSkillCalculatePercentWithBonus(float bonus = 0.0f, float min = 0.01f, float max = 1.0f)
+    public static float DeathSkillCalculatePercentWithBonus()
     {
-        float percentage = 0f;
-        if (Player.m_localPlayer != null) {
-            float player_skill_level = Player.m_localPlayer.GetSkillFactor(DeathSkill);
-            percentage += player_skill_level;
-        }
-        
-        percentage += bonus;
-        if (percentage < min) {  percentage = min;  }
-        if (percentage > max) { percentage = max; }
-        return percentage;
+        float percentage = Player.m_localPlayer != null ? Player.m_localPlayer.GetSkillFactor(DeathSkill) : 0f;
+        return Mathf.Clamp(percentage, 0.01f, 1f);
     }
-
 
     [HarmonyPatch(typeof(Player), nameof(Player.RaiseSkill))]
     public class Deathskill_EXP_Patch
     {
         public static void Postfix(Player __instance)
         {
-            timeSinceGameStart += Time.deltaTime;
-            if (lastSkillIncreaseTickTime == 0f)
-            {
-                lastSkillIncreaseTickTime = timeSinceGameStart + ValConfig.SkillProgressUpdateCheckInterval.Value;
-                PlayerProfile profile = Game.instance.GetPlayerProfile();
-                var stats = profile.m_playerStats[PlayerProfile.c_RawStats].m_stats;
-                _bossKills = stats[PlayerStatType.BossKills];
-                _enemykills = stats[PlayerStatType.EnemyKills];
-                _piecesBuilt = stats[PlayerStatType.Builds];
-                _treesChopped = stats[PlayerStatType.TreeChops];
-                _mineAmount = stats[PlayerStatType.Mines];
-                _craftAndUpgrades = stats[PlayerStatType.CraftsOrUpgrades];
+            if (__instance != Player.m_localPlayer || Game.instance == null) { return; }
+            PlayerProfile profile = Game.instance.GetPlayerProfile();
+            var stats = profile.m_playerStats[PlayerProfile.c_RawStats].m_stats;
+            float bkillstat = stats[PlayerStatType.BossKills];
+            float killstat = stats[PlayerStatType.EnemyKills];
+            float builtpieces = stats[PlayerStatType.Builds];
+            float treesChopped = stats[PlayerStatType.TreeChops];
+            float miningAmount = stats[PlayerStatType.Mines];
+            float craftAndUpgrade = stats[PlayerStatType.CraftsOrUpgrades];
+
+            // The totals are per character, so another character's numbers are no baseline for this one.
+            bool hasBaseline = profile.GetPlayerID() == baselinePlayerId;
+            // RaiseSkill only runs while the player is doing something, so the interval is measured on
+            // the clock rather than summed from the frames this happens to run on.
+            if (hasBaseline && Time.time < nextTickTime) { return; }
+            baselinePlayerId = profile.GetPlayerID();
+            nextTickTime = Time.time + ValConfig.SkillProgressUpdateCheckInterval.Value;
+
+            float bosskillxp = Mathf.Max(0f, bkillstat - _bossKills) * ValConfig.SkillGainOnBossKills.Value;
+            float killxp = Mathf.Max(0f, killstat - _enemykills) * ValConfig.SkillGainOnKills.Value;
+            float buildxp = Mathf.Max(0f, builtpieces - _piecesBuilt) * ValConfig.SkillGainOnBuilding.Value;
+            float treeharvestxp = Mathf.Max(0f, treesChopped - _treesChopped) * ValConfig.SkillGainOnResourceGathering.Value;
+            float mineharvestxp = Mathf.Max(0f, miningAmount - _mineAmount) * ValConfig.SkillGainOnResourceGathering.Value;
+            float craftupgradexp = Mathf.Max(0f, craftAndUpgrade - _craftAndUpgrades) * ValConfig.SkillGainOnCrafts.Value;
+            _bossKills = bkillstat;
+            _enemykills = killstat;
+            _piecesBuilt = builtpieces;
+            _treesChopped = treesChopped;
+            _mineAmount = miningAmount;
+            _craftAndUpgrades = craftAndUpgrade;
+
+            float total_xp_from_actions = bosskillxp + killxp + buildxp + treeharvestxp + mineharvestxp + craftupgradexp;
+            if (!hasBaseline || total_xp_from_actions <= 0f) { return; }
+
+            // The log is negative in the first second after a respawn, which would lower the skill and
+            // hand out negative Almanac/WackyMMO XP.
+            float skillbonus = Mathf.Max(0f, ((float)Math.Log(__instance.m_timeSinceDeath) / 5) * 0.5f);
+            float curved_xp = (skillbonus * total_xp_from_actions);
+
+            if (Deathlink.RustyAlmanacClassesLoaded) {
+                int almXP = Mathf.RoundToInt(curved_xp * ValConfig.AlmanacClassesXPGainScale.Value);
+                Logger.LogDebug($"Almanac XP Gain {almXP}");
+                AlmanacClasses.API.ClassesAPI.AddEXP(almXP);
             }
-            // Logger.Debug($"DeathSkill increase interval check: {timeSinceGameStart} > {lastSkillIncreaseTickTime}");
-            if (timeSinceGameStart > lastSkillIncreaseTickTime)
-            {
-                // set when we should tick the next increase
-                lastSkillIncreaseTickTime = timeSinceGameStart + ValConfig.SkillProgressUpdateCheckInterval.Value;
-
-                PlayerProfile profile = Game.instance.GetPlayerProfile();
-                var stats = profile.m_playerStats[PlayerProfile.c_RawStats].m_stats;
-                float bkillstat = stats[PlayerStatType.BossKills];
-                float killstat = stats[PlayerStatType.EnemyKills];
-                float builtpieces = stats[PlayerStatType.Builds];
-                float treesChopped = stats[PlayerStatType.TreeChops];
-                float miningAmount = stats[PlayerStatType.Mines];
-                float craftAndUpgrade = stats[PlayerStatType.CraftsOrUpgrades];
-                float craftupgradexp = 0;
-                float mineharvestxp = 0;
-                float treeharvestxp = 0;
-                float buildxp = 0;
-                float killxp = 0;
-                float bosskillxp = 0;
-                if (bkillstat > _bossKills || killstat > _enemykills)
-                {
-                    bosskillxp = (bkillstat - _bossKills) * ValConfig.SkillGainOnBossKills.Value;
-                    killxp = (killstat - _enemykills) * ValConfig.SkillGainOnKills.Value;
-                    Logger.LogDebug($"DeathProgression kill skill bosskill: {bosskillxp} kill: {killxp}");
-                    _bossKills = bkillstat;
-                    _enemykills = killstat;
-                }
-                if (builtpieces > _piecesBuilt)
-                {
-                    buildxp = (builtpieces - _piecesBuilt) * ValConfig.SkillGainOnBuilding.Value;
-                    Logger.LogDebug($"DeathProgression building skill: {buildxp}");
-                    _piecesBuilt = builtpieces;
-                }
-                if (treesChopped > _treesChopped || miningAmount > _mineAmount)
-                {
-                    treeharvestxp = (treesChopped - _treesChopped) * ValConfig.SkillGainOnResourceGathering.Value;
-                    mineharvestxp = (miningAmount - _mineAmount) * ValConfig.SkillGainOnResourceGathering.Value;
-                    Logger.LogDebug($"DeathProgression harvesting skill tree_harvest: {treeharvestxp} mining: {mineharvestxp}");
-                    _treesChopped = treesChopped;
-                    _mineAmount = miningAmount;
-                }
-                if (craftAndUpgrade > _craftAndUpgrades)
-                {
-                    craftupgradexp = (craftAndUpgrade - _craftAndUpgrades) * ValConfig.SkillGainOnCrafts.Value;
-                    Logger.LogDebug($"DeathProgression crafting skill crafting: {craftupgradexp}");
-                    _craftAndUpgrades = craftAndUpgrade;
-                }
-                
-                // calculate the skill bonus for how long the player has been alive
-                float total_xp_from_actions = bosskillxp + killxp + buildxp + treeharvestxp + mineharvestxp + craftupgradexp;
-                // Clamp to >= 0: Math.Log(m_timeSinceDeath) is negative in the first second after a
-                // respawn, which would otherwise feed a negative value into RaiseSkill and briefly
-                // reduce the death skill (and grant negative Almanac/WackyMMO XP).
-                float skillbonus = Mathf.Max(0f, ((float)Math.Log(__instance.m_timeSinceDeath) / 5) * 0.5f);
-                float curved_xp = (skillbonus * total_xp_from_actions);
-
-                if (Deathlink.RustyAlmanacClassesLoaded) {
-                    int almXP = Mathf.RoundToInt(curved_xp * ValConfig.AlmanacClassesXPGainScale.Value);
-                    Logger.LogDebug($"Almanac XP Gain {almXP}");
-                    AlmanacClasses.API.ClassesAPI.AddEXP(almXP);
-                }
-                if (Deathlink.WackyMMOLoaded) {
-                    int wackyXP = Mathf.RoundToInt(curved_xp * ValConfig.WackyMMOXPGainScale.Value);
-                    Logger.LogDebug($"WackyMMO XP Gain {wackyXP}");
-                    EpicMMOSystem_API.AddExp(wackyXP);
-                }
-
-                // DeathSkillRate is the level's "how fast does Deathlink skill itself climb" dial. It has
-                // been in the shipped README and in real config files since the beginning but was never
-                // read; applying it here is what makes those files mean what they say.
-                float skill_rate = Deathlink.pcfg().DeathSkillRate;
-                Logger.LogDebug($"DeathProgression skill bonus from survival (survive time: {__instance.m_timeSinceDeath}) {skillbonus} x {total_xp_from_actions} = {curved_xp}, death skill rate {skill_rate}");
-                Player.m_localPlayer.RaiseSkill(DeathSkill, curved_xp * skill_rate);
+            if (Deathlink.WackyMMOLoaded) {
+                int wackyXP = Mathf.RoundToInt(curved_xp * ValConfig.WackyMMOXPGainScale.Value);
+                Logger.LogDebug($"WackyMMO XP Gain {wackyXP}");
+                EpicMMOSystem_API.AddExp(wackyXP);
             }
+
+            // DeathSkillRate scales how fast the level's Deathlink skill climbs.
+            float skill_rate = Deathlink.pcfg().DeathSkillRate;
+            Logger.LogDebug($"DeathProgression skill bonus from survival (survive time: {__instance.m_timeSinceDeath}) {skillbonus} x {total_xp_from_actions} = {curved_xp}, death skill rate {skill_rate}");
+            __instance.RaiseSkill(DeathSkill, curved_xp * skill_rate);
         }
     }
 }

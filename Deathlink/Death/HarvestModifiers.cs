@@ -3,44 +3,33 @@ using HarmonyLib;
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using static Deathlink.Common.DataObjects;
 
 namespace Deathlink.Death
 {
     /// <summary>
-    /// Applies a death choice's resource multiplier (<c>BonusModifier</c>) to harvested drops.
-    /// The modifier is a true multiplier: values above 1.0 increase drops, values below 1.0
-    /// decrease them (down to nothing). Trees, mine rocks and destructibles all build their
-    /// drops through <see cref="DropTable.GetDropList"/> before spawning, so we rescale that
-    /// list in place; pickables instead drop one unit at a time, so we rescale each drop's stack.
+    /// Scales harvested drops by the death choice's resource multiplier. Trees, mine rocks and
+    /// destructibles build their drops through <see cref="DropTable.GetDropList"/>, so that list is
+    /// rescaled; pickables drop one unit at a time, so each drop's stack is rescaled.
     /// </summary>
     public static class HarvestModifiers
     {
-        // Set true only while a harvestable is spawning its DropTable drops, so the shared
-        // DropTable.GetDropList postfix rescales *harvest* drops and nothing else (containers,
-        // creatures, etc. also use DropTable). Unity runs all of this on the main thread, so a
-        // plain static flag brackets the call reliably.
+        // Containers and creatures use DropTable too, so the GetDropList postfix only scales while a
+        // harvestable has this set. Everything here runs on the main thread, so a static flag is enough.
         internal static bool ScalingActive;
-
-        // ---- shared helpers -------------------------------------------------
 
         private static bool HasResourceModifiers()
         {
-            var cfg = Deathlink.pcfg();
-            return cfg.ResourceModifiers != null && cfg.ResourceModifiers.Count > 0;
+            return Deathlink.pcfg().HasResourceModifiers(ResourceGainTypes.Harvesting);
         }
 
         private static bool HasLootModifiers()
         {
-            var cfg = Deathlink.pcfg();
-            return cfg.DeathLootModifiers != null && cfg.DeathLootModifiers.Count > 0;
+            return Deathlink.pcfg().HasLoot(ResourceGainTypes.Harvesting);
         }
 
-        /// <summary>
-        /// Only the harvester on their own machine gets the modifier or bonus loot. Requires a local
-        /// player, either resource modifiers or loot modifiers to be configured, and that the attacker
-        /// is the local player. The two features are independent: a level with only harvest bonus loot
-        /// (and an empty ResourceModifiers) must still open the bracket so the loot rolls.
-        /// </summary>
+        // Only the harvester's own machine applies the modifier and bonus loot. The two are independent:
+        // a level with only harvest bonus loot must still open the bracket so the loot rolls.
         private static bool ShouldHandleHarvest(HitData hit)
         {
             if (Player.m_localPlayer == null) { return false; }
@@ -49,11 +38,15 @@ namespace Deathlink.Death
             return hit.m_attacker == Player.m_localPlayer.GetZDOID();
         }
 
-        /// <summary>
-        /// Scales an integer count by a (possibly fractional) multiplier while preserving the
-        /// expected value: <c>floor(count*m)</c> plus one more with probability equal to the
-        /// fractional part. Can return 0, so a modifier below 1.0 may remove a drop entirely.
-        /// </summary>
+        // True when this call opened the bracket and so must close it.
+        private static bool BeginScaling(HitData hit)
+        {
+            if (ScalingActive || !ShouldHandleHarvest(hit)) { return false; }
+            ScalingActive = true;
+            return true;
+        }
+
+        // Keeps the expected value: the fractional part is the chance of one more. Can return 0.
         public static int ScaleCount(int baseCount, float m)
         {
             if (baseCount <= 0) { return 0; }
@@ -64,16 +57,11 @@ namespace Deathlink.Death
             return whole;
         }
 
-        /// <summary>
-        /// Rebuilds a <see cref="DropTable.GetDropList"/> result (one GameObject entry per dropped
-        /// unit) with each prefab's unit count scaled by its configured resource modifier. Prefabs
-        /// with no modifier (1f) keep their original count.
-        /// </summary>
+        // GetDropList returns one entry per dropped unit.
         public static void ScaleDropListInPlace(List<GameObject> drops)
         {
             if (drops == null || drops.Count == 0) { return; }
 
-            // Count units per prefab, keeping first-seen order for a stable rebuild.
             Dictionary<GameObject, int> counts = new Dictionary<GameObject, int>();
             List<GameObject> order = new List<GameObject>();
             foreach (GameObject go in drops)
@@ -86,7 +74,7 @@ namespace Deathlink.Death
             drops.Clear();
             foreach (GameObject go in order)
             {
-                float m = Deathlink.pcfg().GetResouceEarlyCache(go);
+                float m = Deathlink.pcfg().GetResourceModifier(go, ResourceGainTypes.Harvesting);
                 int finalCount = (m == 1f) ? counts[go] : ScaleCount(counts[go], m);
                 if (finalCount != counts[go])
                 {
@@ -96,26 +84,19 @@ namespace Deathlink.Death
             }
         }
 
-        /// <summary>
-        /// Rolls the chance-based harvest bonus loot (<c>DeathLootModifiers</c> with the Harvesting
-        /// action) and spawns it. This is a separate feature from the multiplier and fires once per
-        /// harvest event.
-        /// </summary>
         private static void SpawnHarvestBonusLoot(Vector3 position)
         {
-            List<KeyValuePair<GameObject, int>> harvestloot = Deathlink.pcfg().RollHarvestLoot();
+            List<KeyValuePair<GameObject, int>> harvestloot = Deathlink.pcfg().RollLoot(ResourceGainTypes.Harvesting);
             if (harvestloot.Count == 0) { return; }
             foreach (var kvp in harvestloot)
             {
                 for (int i = 0; i < kvp.Value; i++)
                 {
                     Quaternion rotation = Quaternion.Euler(0f, UnityEngine.Random.Range(0, 360), 0f);
-                    UnityEngine.Object.Instantiate(kvp.Key, position, rotation);
+                    ItemDrop.OnCreateNew(UnityEngine.Object.Instantiate(kvp.Key, position, rotation));
                 }
             }
         }
-
-        // ---- shared DropTable rescale (trees, destructibles, mine rocks) ----
 
         // GetDropList() returns a freshly allocated list, so mutating __result in place is safe.
         [HarmonyPatch(typeof(DropTable), nameof(DropTable.GetDropList), new Type[0])]
@@ -128,24 +109,15 @@ namespace Deathlink.Death
             }
         }
 
-        // ---- per-harvestable brackets --------------------------------------
-        // Each bracket turns scaling on for the duration of the vanilla destroy/mine call (so only
-        // that call's GetDropList gets rescaled) and, on the way out, rolls the chance-based harvest
-        // bonus loot. __state records whether *this* call owns the scope, so nested/re-entrant
-        // destroys don't clear the flag out from under an outer bracket. The Finalizer runs even if
-        // the original throws, so the flag can never get stuck on.
-
+        // Each bracket scales only its own call's GetDropList, then rolls the bonus loot. __state says
+        // whether this call owns the bracket, so a nested destroy does not clear an outer one's flag.
+        // A Finalizer runs even when the original throws, so the flag never sticks on.
         [HarmonyPatch(typeof(TreeLog), nameof(TreeLog.Destroy))]
         public static class TreeLogHarvestScale
         {
             private static void Prefix(HitData hitData, out bool __state)
             {
-                __state = false;
-                if (!ScalingActive && ShouldHandleHarvest(hitData))
-                {
-                    ScalingActive = true;
-                    __state = true;
-                }
+                __state = BeginScaling(hitData);
             }
 
             private static void Finalizer(TreeLog __instance, bool __state)
@@ -165,15 +137,10 @@ namespace Deathlink.Death
                 // Rocks that spawn a fracture (a MineRock5) drop via that fracture, not here; let the
                 // MineRock5 bracket handle those so the modifier isn't applied twice.
                 if (__instance.m_spawnWhenDestroyed != null) { return; }
-                // Only treat destructibles that actually drop harvest resources (parity with the old
-                // patch, which required a DropOnDestroyed drop table).
+                // A destructible that drops nothing is not a harvest, so it rolls no bonus loot.
                 DropOnDestroyed drops = __instance.GetComponent<DropOnDestroyed>();
                 if (drops == null || drops.m_dropWhenDestroyed == null || drops.m_dropWhenDestroyed.IsEmpty()) { return; }
-                if (!ScalingActive && ShouldHandleHarvest(hit))
-                {
-                    ScalingActive = true;
-                    __state = true;
-                }
+                __state = BeginScaling(hit);
             }
 
             private static void Finalizer(Destructible __instance, bool __state)
@@ -191,12 +158,7 @@ namespace Deathlink.Death
         {
             private static void Prefix(HitData hit, out bool __state)
             {
-                __state = false;
-                if (!ScalingActive && ShouldHandleHarvest(hit))
-                {
-                    ScalingActive = true;
-                    __state = true;
-                }
+                __state = BeginScaling(hit);
             }
 
             // __result is DamageArea's return value: true only when the hit area was destroyed and
@@ -209,22 +171,48 @@ namespace Deathlink.Death
             }
         }
 
-        // ---- pickables ------------------------------------------------------
-        // Pickable.Drop is called once per dropped unit (stack 1 for the main item, its stack for
-        // each extra drop). Rewrite the stack by the multiplier and let vanilla handle placement;
-        // a scaled result of 0 cancels the drop, which is how a modifier below 1.0 reduces yield.
+        // Single-piece deposits (tin, obsidian, meteorite and the like) are MineRock, not MineRock5, and drop
+        // from RPC_Hit. __state is the hit area's health before the hit, or -1 when this call does not own
+        // the bracket.
+        [HarmonyPatch(typeof(MineRock), "RPC_Hit")]
+        public static class SingleMineRockHarvestScale
+        {
+            private static void Prefix(MineRock __instance, HitData hit, int hitAreaIndex, out float __state)
+            {
+                __state = -1f;
+                ZDO zdo = __instance.m_nview != null ? __instance.m_nview.GetZDO() : null;
+                if (zdo == null || ScalingActive || !ShouldHandleHarvest(hit)) { return; }
+                float health = zdo.GetFloat("Health" + hitAreaIndex, __instance.GetHealth());
+                if (health <= 0f) { return; }
+                ScalingActive = true;
+                __state = health;
+            }
+
+            private static void Finalizer(MineRock __instance, int hitAreaIndex, float __state)
+            {
+                if (__state <= 0f) { return; }
+                ScalingActive = false;
+                ZDO zdo = __instance.m_nview != null ? __instance.m_nview.GetZDO() : null;
+                if (zdo != null && zdo.GetFloat("Health" + hitAreaIndex, __state) <= 0f) {
+                    SpawnHarvestBonusLoot(__instance.transform.position);
+                }
+            }
+        }
+
+        // Pickable.Drop is called once per drop: the main item with stack 1, each extra drop with its
+        // own stack.
         [HarmonyPatch(typeof(Pickable), nameof(Pickable.Drop))]
         public static class ScalePickableDrop
         {
             private static bool Prefix(GameObject prefab, ref int stack)
             {
                 if (Player.m_localPlayer == null || !HasResourceModifiers() || prefab == null) { return true; }
-                float m = Deathlink.pcfg().GetResouceEarlyCache(prefab);
+                float m = Deathlink.pcfg().GetResourceModifier(prefab, ResourceGainTypes.Harvesting);
                 if (m == 1f) { return true; }
 
                 int count = ScaleCount(stack, m);
-                if (count <= 0) { return false; } // reduced away — drop nothing
-                stack = count;                    // vanilla spawns one stack of the scaled amount
+                if (count <= 0) { return false; }
+                stack = count;
                 return true;
             }
         }

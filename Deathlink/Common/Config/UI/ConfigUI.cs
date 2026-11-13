@@ -1,6 +1,7 @@
 using Jotunn.Managers;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.UI;
@@ -29,41 +30,28 @@ namespace Deathlink.Common {
         // --- Input blocking -------------------------------------------------------------------------
 
         // Every InputField in a Valheim UI leaks keystrokes into the game -- typing a level name walks
-        // your character around. GUIManager.BlockInput stops that, but it is a plain bool, so a picker
-        // overlay closing on top of an editor would unblock while the editor is still open. Hence a
-        // refcount.
-        private static int inputBlockDepth;
-
-        internal static void PushInputBlock() {
-            // Only meaningful in-world; in the main menu there is no player to block and BlockInput(true)
-            // there would fight the menu's own handling.
-            if (Player.m_localPlayer == null) { return; }
-            inputBlockDepth++;
-            if (inputBlockDepth == 1) { GUIManager.BlockInput(true); }
-        }
-
-        internal static void PopInputBlock() {
-            if (inputBlockDepth <= 0) { return; }
-            inputBlockDepth--;
-            if (inputBlockDepth == 0) { GUIManager.BlockInput(false); }
-        }
-
-        // Releases a block from OnDestroy rather than from a close handler. If an exception is thrown
-        // between building a panel and closing it -- or the scene changes underneath it -- a close-handler
-        // release never runs and the player is left unable to move with no way out but a relog.
+        // your character around. GUIManager.BlockInput stops that. Jotunn counts the requests, shared
+        // across every mod, so each guard takes one and gives back exactly one, and a picker closing over
+        // an editor leaves the editor's block in place.
+        //
+        // Released from OnDestroy rather than from a close handler. If an exception is thrown between
+        // building a panel and closing it -- or the scene changes underneath it -- a close-handler release
+        // never runs and the player is left unable to move with no way out but a relog.
         internal class ConfigUIInputGuard : MonoBehaviour {
             private bool held;
 
             internal void Hold() {
-                if (held) { return; }
+                // Jotunn ignores a request outside the main scene, so with no local player there is nothing
+                // to take -- and giving back a block never taken would release another panel's.
+                if (held || Player.m_localPlayer == null) { return; }
                 held = true;
-                PushInputBlock();
+                GUIManager.BlockInput(true);
             }
 
             public void OnDestroy() {
                 if (held == false) { return; }
                 held = false;
-                PopInputBlock();
+                GUIManager.BlockInput(false);
             }
         }
 
@@ -172,6 +160,18 @@ namespace Deathlink.Common {
             return Localization.instance != null ? Localization.instance.Localize(text) : text;
         }
 
+        // The kit's own words: a $token, and the English to show when nothing defines it. Vanilla tokens
+        // where Valheim has one, so those come translated for free; otherwise a shared $modquickconfig_*
+        // token that every mod carrying this folder ships in its English file. The launcher belongs to
+        // whichever copy loaded first, so its words must resolve whatever mod that is -- including one
+        // with no localization at all, which would otherwise show "[modquickconfig_button]".
+        internal static string L(string token, string english) {
+            string text = L(token);
+            // Valheim answers an unknown token with "[token]"; before Localization exists it is the token itself.
+            if (text.Length == 0 || text == token || text == "[" + token.TrimStart('$') + "]") { return english; }
+            return text;
+        }
+
         internal static Text AddText(Transform parent, float x, float y, float w, float h, string text,
             int fontSize, TextAnchor anchor, Color? color = null) {
             GameObject go = GUIManager.Instance.CreateText(
@@ -242,10 +242,18 @@ namespace Deathlink.Common {
 
         // --- Buttons and toggles ---------------------------------------------------------------------
 
+        // Jotunn gives a button a select sound as well as its click. A mouse press selects the button, so one
+        // click played both, except on a button already selected. Valheim's own GUIButton has only the click.
+        internal static void ClickSoundOnly(GameObject button) {
+            ButtonSfx sounds = button.GetComponent<ButtonSfx>();
+            if (sounds != null) { sounds.m_selectSfxPrefab = null; }
+        }
+
         internal static GameObject AddButton(Transform parent, float x, float y, float w, string text,
             UnityAction onClick, float h = 40f) {
             GameObject go = GUIManager.Instance.CreateButton(L(text), parent,
                 new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(x, -y), w, h);
+            ClickSoundOnly(go);
             RectTransform rt = (RectTransform)go.transform;
             rt.pivot = new Vector2(0f, 1f);
             rt.anchoredPosition = new Vector2(x, -y);
@@ -298,8 +306,9 @@ namespace Deathlink.Common {
 
         // --- Numbers ----------------------------------------------------------------------------------
 
+        // Invariant, matching how typed values are parsed: under a comma-decimal culture this showed "1,50".
         internal static string Fmt(float v, bool whole) {
-            return whole ? ((int)Mathf.Round(v)).ToString() : v.ToString("0.00");
+            return whole ? ((int)Mathf.Round(v)).ToString(CultureInfo.InvariantCulture) : v.ToString("0.00", CultureInfo.InvariantCulture);
         }
 
         // Jotunn has no CreateSlider, so this is hand-built out of the pieces Unity's Slider expects and
@@ -393,7 +402,9 @@ namespace Deathlink.Common {
             // Commit typed values on enter or focus loss: unparseable text snaps back to the slider, then
             // clamp, then normalise what is displayed.
             box.onEndEdit.AddListener(str => {
-                if (float.TryParse(str, out float v) == false) { v = slider.value; }
+                // Invariant, with a comma taken as the decimal point: Unity's decimal field accepts both, and the
+                // current culture read "1.5" on a German system (or "1,5" on an English one) as a grouped 15.
+                if (float.TryParse(str.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out float v) == false) { v = slider.value; }
                 v = Mathf.Clamp(v, min, max);
                 if (wholeNumbers) { v = Mathf.Round(v); }
                 box.SetTextWithoutNotify(Fmt(v, wholeNumbers));
@@ -451,6 +462,7 @@ namespace Deathlink.Common {
             // so showing a translated form here would teach them the wrong word. The label beside it is.
             GameObject go = GUIManager.Instance.CreateButton(options.Length > 0 ? options[idx] : "", row.transform,
                 new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(labelW + 6f, -2f), ctrlW, 28f);
+            ClickSoundOnly(go);
             RectTransform rt = (RectTransform)go.transform;
             rt.pivot = new Vector2(0f, 1f);
             rt.anchoredPosition = new Vector2(labelW + 6f, -2f);
@@ -529,7 +541,7 @@ namespace Deathlink.Common {
             GameObject header = NewLayoutRow(content, width, SubRowHeight);
             AddText(header.transform, 0f, 0f, width - 90f, SubRowHeight, label, 14, TextAnchor.MiddleLeft,
                 GUIManager.Instance.ValheimOrange);
-            AddButton(header.transform, width - 84f, 0f, 80f, "Add", () => {
+            AddButton(header.transform, width - 84f, 0f, 80f, L("$piece_smelter_add", "Add"), () => {
                 items.Add("");
                 onChanged?.Invoke();
             }, 24f);

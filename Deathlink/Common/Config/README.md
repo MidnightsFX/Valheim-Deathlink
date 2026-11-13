@@ -57,8 +57,8 @@ the header and nobody notices until someone needs it.
 `WriteRawToDisk` removes any copies of the header already at the top of the payload before it writes the
 header, so text that already carries it doesn't end up with two. The server's file text sent to clients
 is the case this is for. A copy is recognised by its first and last lines, so an older version of the
-header is removed as well. Start and end your header with the same banner line (as Deathlink's do) and
-don't reuse that banner in comments of your own at the top of the file.
+header is removed as well. Start and end your header with the same banner line and don't reuse that
+banner in comments of your own at the top of the file.
 
 ## Defaults, and the `[DefaultValue]` trap
 
@@ -108,13 +108,12 @@ up prefabs would warn about every name in the file. Such a validator must:
 
 **`PrefabManager.Instance` cannot be used as the readiness check.** Jotunn declares it as
 `_instance ??= new PrefabManager()`, so reading the property constructs it and a null guard on it never
-trips. Use `Utils.PrefabsAvailable()` (`ZNetScene.instance.m_namedPrefabs` is populated) instead.
+trips. Check that `ZNetScene.instance.m_namedPrefabs` is populated instead.
 
-Deathlink drives this from the player path: `DeathConfigurationData.EnsurePrefabsValidated()` is called
-from `CheckAndSetPlayerDeathConfig`, which every route to a resolved death choice funnels through, and is
-a no-op once the pass has run. `PrefabManager.OnPrefabsRegistered` re-arms it — a new `ZNetScene` means a
-new prefab table — and runs it directly only when `GUIManager.IsHeadless()`, because a dedicated server
-has no local player to trigger the lazy path.
+Call it from the code path every use of the values goes through, and make it a no-op once the pass has
+run. Re-arm it from `PrefabManager.OnPrefabsRegistered` — a new `ZNetScene` means a new prefab table —
+and run it there directly only when `GUIManager.IsHeadless()`, because a dedicated server has no local
+player to start the lazy path.
 
 ## Server sync
 
@@ -125,10 +124,18 @@ memory, and additionally write it to disk if `ClientWritesToDisk` is set.
 Client uploads on the main channel are **always rejected**. Jotunn's `IsAdminOnly` covers `ConfigEntry`
 values only — a `CustomRPC` has no protection of its own and any peer can craft the package.
 
-A file may opt into a separate, admin-gated upload channel with `AllowAdminEdit = true`. That registers a
-second RPC (`<RpcName>_Edit`) on which a connected admin can send a replacement. The server checks
-`SenderIsAdmin`, runs `DryRun` to validate **without applying**, and only then applies, writes and
-re-broadcasts; a refusal goes back to the sender with the reason. Leave it off for save data.
+The same goes the other way: a client applies whatever arrives on the main channel, because it cannot
+tell the server's copy from one another client forged. A `CustomRPC` rides `ZRoutedRpc`, whose sender id
+is written by the sending client and passed through by the server untouched, so checking it would prove
+nothing. The channel stays a `CustomRPC` because that is what Jotunn's initial synchronization takes.
+
+A file may opt into a separate, admin-gated upload channel with `AllowAdminEdit = true`. Because of the
+sender-id problem above, that channel is **not** a `CustomRPC`: it rides each peer's own connection
+(`ZNetPeer.m_rpc`, registered from a `ZNet.OnNewConnection` postfix), so the server checks its admin list
+against the socket the upload arrived on, as vanilla's `RPC_RemoteCommand` does. It then runs `DryRun` to
+validate **without applying**, and only then applies, writes and re-broadcasts; a refusal goes back to
+the sender with the reason. An upload over 250 KB is refused before it is sent, since this channel is not
+sliced the way a `CustomRPC` is. Leave it off for save data.
 
 Everything an editor changes goes through `YamlConfigManager.ApplyEdited(file, yaml, out message)` —
 validate, apply, write with the header, broadcast. Note the broadcast there is explicit and has to be:
@@ -186,8 +193,11 @@ Copy `Common/Config/`, then:
    `Init()`. `TolerantEnumConverter` is registered for you.
 7. Call `YamlConfigManager.Init()` from `Awake`, after your config class is constructed.
 
-It patches `ZNet.Shutdown` with a private Harmony instance rather than `[HarmonyPatch]` attributes, so a
-plugin that also calls `Harmony.CreateAndPatchAll(assembly)` will not apply it a second time.
+It patches `ZNet.Shutdown`, and `ZNet.OnNewConnection` once a file sets `AllowAdminEdit`, with a private
+Harmony instance rather than `[HarmonyPatch]` attributes, so a plugin that also calls
+`Harmony.CreateAndPatchAll(assembly)` will not apply them a second time. The edit channel's RPC names are
+prefixed with your `PluginGUID`, so two mods built from this folder do not overwrite each other's
+handlers.
 
-`ConfigNetwork.SenderIsAdmin` is duplicated from `Common/Terminal/TerminalNetwork.cs` on purpose, so the
-two folders stay independently droppable. Do not extract it into a shared helper.
+The edit channel's per-connection registration and admin check mirror `Common/Terminal/TerminalNetwork.cs`
+on purpose, so the two folders stay independently droppable. Do not extract them into a shared helper.

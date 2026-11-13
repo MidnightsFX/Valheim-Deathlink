@@ -2,17 +2,14 @@ using Deathlink.Common;
 using Jotunn.Managers;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using UnityEngine;
 using UnityEngine.UI;
 using static Deathlink.Common.DataObjects;
 
 namespace Deathlink.Death
 {
-    // The in-game death-choice editor, reached from the shared config launcher.
-    //
-    // Built on Common/Config/UI. Panel is destroyed and rebuilt on every open, and the detail pane is
-    // rebuilt on every selection change -- that sidesteps two-way binding entirely, which is worth far
-    // more than the widgets it costs to recreate.
+    // The panel is rebuilt on every open and the detail pane on every change, which avoids two-way binding.
     internal static class DeathChoiceEditor
     {
         private const string EntryName = "Deathlink";
@@ -28,6 +25,7 @@ namespace Deathlink.Death
         private static Transform body;
         private static GameObject detailRoot;
         private static Transform listContent;
+        private static float listContentW;
         private static Text messages;
         private static DeathChoiceEditorModel model;
         private static int activeTab;
@@ -57,7 +55,7 @@ namespace Deathlink.Death
 
         internal static void OpenPanel() {
             ClosePanel();
-            if (GUIManager.Instance == null || GUIManager.CustomGUIFront == null) { return; }
+            if (GUIManager.CustomGUIFront == null) { return; }
 
             model = DeathChoiceEditorModel.Snapshot();
             awaitingServer = false;
@@ -91,13 +89,11 @@ namespace Deathlink.Death
             awaitingServer = false;
         }
 
-        // --- Left hand list -------------------------------------------------------------------------
-
         private static void BuildLevelList() {
             ConfigUI.AddText(body, 20f, 54f, ListW, 24f, "$dl_cfg_levels", 15, TextAnchor.MiddleLeft,
                 GUIManager.Instance.ValheimYellow);
-            ConfigUI.CreateScroll(body, 20f, 82f, ListW, PanelH - 240f, out listContent, out float contentW);
-            RefreshLevelList(contentW);
+            ConfigUI.CreateScroll(body, 20f, 82f, ListW, PanelH - 240f, out listContent, out listContentW);
+            RefreshLevelList();
 
             float y = PanelH - 150f;
             ConfigUI.AddButton(body, 20f, y, 58f, "$dl_cfg_add", OnAdd, 30f);
@@ -106,18 +102,17 @@ namespace Deathlink.Death
             ConfigUI.AddButton(body, 206f, y, 58f, "$dl_cfg_delete", OnDelete, 30f);
         }
 
-        private static void RefreshLevelList(float contentW) {
+        private static void RefreshLevelList() {
             if (listContent == null) { return; }
             foreach (Transform child in listContent) { UnityEngine.Object.Destroy(child.gameObject); }
 
             foreach (string key in model.Order) {
                 string entry = key;
                 bool selected = string.Equals(entry, model.SelectedKey, StringComparison.Ordinal);
-                GameObject row = ConfigUI.NewLayoutRow(listContent, contentW, 32f);
-                GameObject button = ConfigUI.AddButton(row.transform, 0f, 0f, contentW, entry, () => {
+                GameObject row = ConfigUI.NewLayoutRow(listContent, listContentW, 32f);
+                GameObject button = ConfigUI.AddButton(row.transform, 0f, 0f, listContentW, entry, () => {
                     model.SelectedKey = entry;
-                    RefreshLevelList(contentW);
-                    BuildDetail();
+                    RebuildList();
                 }, 30f);
                 if (selected) {
                     Text caption = button.GetComponentInChildren<Text>();
@@ -127,8 +122,7 @@ namespace Deathlink.Death
         }
 
         private static void RebuildList() {
-            // The scroll content width is fixed at build time; recompute it the same way CreateScroll did.
-            RefreshLevelList(ListW - 16f);
+            RefreshLevelList();
             BuildDetail();
         }
 
@@ -150,8 +144,7 @@ namespace Deathlink.Death
             if (string.IsNullOrEmpty(model.SelectedKey)) { return; }
             string oldKey = model.SelectedKey;
 
-            // The warning is fixed text, not a validation result: renaming is destructive in a way the
-            // admin cannot see from the panel, because the consequence lands on other people's characters.
+            // Shown on every rename: the cost lands on other players' characters, which the panel cannot show.
             string warning = ConfigUI.L("$dl_cfg_rename_warning").Replace("{0}", oldKey);
             if (ValConfig.DefaultDeathChoice != null
                 && string.Equals(ValConfig.DefaultDeathChoice.Value, oldKey, StringComparison.Ordinal)) {
@@ -171,8 +164,6 @@ namespace Deathlink.Death
             if (string.IsNullOrEmpty(message) == false) { ShowWarning(message); }
             RebuildList();
         }
-
-        // --- Tabs and detail pane --------------------------------------------------------------------
 
         private static void BuildTabs() {
             float x = DetailX;
@@ -218,7 +209,6 @@ namespace Deathlink.Death
             rows.Add(ConfigUI.AddTextFieldRow(parent, width, LabelW, 300f, "$dl_cfg_displayname",
                 level.DisplayName, s => level.DisplayName = s, null, 64));
             rows.Add(ConfigUI.AddToggleRow(parent, width, LabelW, "$dl_cfg_fallback", level.Fallback, on => {
-                // Radio, not a plain bool: only one level can be the fallback.
                 if (on) { model.SetFallback(model.SelectedKey); } else { level.Fallback = false; }
                 BuildDetail();
             }));
@@ -242,8 +232,6 @@ namespace Deathlink.Death
             AddScrollEnumCycle(content, w, "$dl_cfg_itemlossstyle", Enum.GetNames(typeof(ItemLossStyle)),
                 (int)style.itemLossStyle, i => {
                     style.itemLossStyle = (ItemLossStyle)i;
-                    // Which rows mean anything depends on the style, so they come and go -- rebuild rather
-                    // than leave dead controls on screen.
                     BuildDetail();
                 });
 
@@ -286,7 +274,10 @@ namespace Deathlink.Death
             }
 
             AddScrollHeader(content, w, "$dl_cfg_skillloss");
-            AddScrollToggle(content, w, "$dl_cfg_skilllossondeath", style.skillLossOnDeath, v => style.skillLossOnDeath = v);
+            AddScrollToggle(content, w, "$dl_cfg_skilllossondeath", style.skillLossOnDeath, v => {
+                style.skillLossOnDeath = v;
+                BuildDetail();
+            });
             if (style.skillLossOnDeath) {
                 // Labelled with the direction on purpose: Max applies at ZERO Deathlink skill, which is the
                 // opposite of what the names suggest, and the validator only catches min > max.
@@ -334,7 +325,7 @@ namespace Deathlink.Death
                     BuildDetail, PrefabNames, IsKnownPrefab);
             }
             AddAddButton(content, w, "$dl_cfg_addresource", () => {
-                level.ResourceModifiers[UniqueEntryKey(level.ResourceModifiers.Keys, "NewResource")] =
+                level.ResourceModifiers[DeathChoiceEditorModel.UniqueKey(level.ResourceModifiers.Keys, "NewResource")] =
                     new DeathResourceModifier() { BonusModifier = 1f, prefabs = new List<string>() };
                 BuildDetail();
             });
@@ -361,7 +352,7 @@ namespace Deathlink.Death
                     v => modifier.skillInfluence = v);
             }
             AddAddButton(content, w, "$dl_cfg_addskill", () => {
-                level.SkillModifiers[UniqueEntryKey(level.SkillModifiers.Keys, "NewSkill")] =
+                level.SkillModifiers[DeathChoiceEditorModel.UniqueKey(level.SkillModifiers.Keys, "NewSkill")] =
                     new DeathSkillModifier() { BonusModifier = 1f, skill = Skills.SkillType.All };
                 BuildDetail();
             });
@@ -390,17 +381,14 @@ namespace Deathlink.Death
                 AddBonusActions(content, w, modifier.bonusActions);
             }
             AddAddButton(content, w, "$dl_cfg_addloot", () => {
-                level.DeathLootModifiers[UniqueEntryKey(level.DeathLootModifiers.Keys, "NewLoot")] =
+                level.DeathLootModifiers[DeathChoiceEditorModel.UniqueKey(level.DeathLootModifiers.Keys, "NewLoot")] =
                     new DeathLootModifier() { chance = 0.05f, amount = 1, bonusActions = new List<ResourceGainTypes>() };
                 BuildDetail();
             });
         }
 
-        // --- Scroll-content row helpers ----------------------------------------------------------------
-        //
-        // Rows inside a scroll view size themselves through a LayoutElement (NewLayoutRow), so these wrap
-        // the kit's absolutely-positioned Add*Row helpers by giving each one its own layout row to sit in.
-
+        // Scroll content is laid out by LayoutElement, so each of these puts its widgets in a NewLayoutRow
+        // instead of using the kit's absolutely-positioned Add*Row helpers.
         private static void AddScrollHeader(Transform content, float w, string label) {
             GameObject row = ConfigUI.NewLayoutRow(content, w, ConfigUI.RowHeight);
             ConfigUI.AddText(row.transform, 0f, 0f, w, ConfigUI.RowHeight, label, 16, TextAnchor.MiddleLeft,
@@ -440,7 +428,8 @@ namespace Deathlink.Death
                 onChange(v);
             });
             box.onEndEdit.AddListener(str => {
-                if (float.TryParse(str, out float v) == false) { v = slider.value; }
+                // The box is filled with invariant text, so it is read back the same way whatever the system's decimal separator.
+                if (float.TryParse(str.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out float v) == false) { v = slider.value; }
                 v = Mathf.Clamp(v, min, max);
                 if (whole) { v = Mathf.Round(v); }
                 box.SetTextWithoutNotify(ConfigUI.Fmt(v, whole));
@@ -512,8 +501,6 @@ namespace Deathlink.Death
             }
         }
 
-        // --- Apply ---------------------------------------------------------------------------------
-
         private static void RunValidate() {
             if (model == null) { return; }
             ValidationReport report = model.Validate();
@@ -530,16 +517,14 @@ namespace Deathlink.Death
             try {
                 ValidationReport report = model.Validate();
                 if (report.HasErrors) {
-                    // Panel stays open and nothing is written. Closing over a rejected save is how an admin
-                    // ends up believing a change landed when it did not.
+                    // Stay open: closing over a rejected save would look as if the change had landed.
                     ConfigUI.SetMessages(messages, report.Errors, report.Warnings);
                     return;
                 }
 
                 YamlConfigFile<Dictionary<string, DeathChoiceLevel>> file = YamlConfigManager.DeathChoices;
                 if (file != null && file.LastLoadedUtc != model.BaseLoadedUtc) {
-                    // Somebody else changed the file while this panel was open. Say so once, then let a
-                    // second press go through -- BaseLoadedUtc is advanced so the warning does not repeat.
+                    // The file changed while the panel was open: warn once, and let a second press through.
                     model.BaseLoadedUtc = file.LastLoadedUtc;
                     ShowWarning(ConfigUI.L("$dl_cfg_changedunderneath"));
                     return;
@@ -566,8 +551,7 @@ namespace Deathlink.Death
                 messages.text = ConfigUI.L("$dl_cfg_sent");
                 BepInEx.ThreadingHelper.Instance?.StartCoroutine(AwaitServerReply());
             } catch (Exception e) {
-                // ClosePanel deliberately does NOT run here: a half-applied save must leave the panel up
-                // with the staged edit intact so the admin can see what happened and retry.
+                // Not closed: the staged edit stays up so the admin can see what happened and retry.
                 Logger.LogError($"Death choice editor failed to apply: {e}");
                 ShowError(e.Message);
             }
@@ -603,8 +587,6 @@ namespace Deathlink.Death
             ConfigUI.SetMessages(messages, null, new List<string>() { message });
         }
 
-        // --- Option sources ---------------------------------------------------------------------------
-
         private static IList<string> PrefabNames() {
             List<string> names = new List<string>();
             if (ZNetScene.instance == null) { return names; }
@@ -615,8 +597,7 @@ namespace Deathlink.Death
         }
 
         // Everything counts as known until the prefab table exists, so opening the editor from the main
-        // menu does not paint every prefab field with a warning marker. Gated on Utils.PrefabsAvailable
-        // rather than PrefabManager.Instance, which is never null -- see that helper.
+        // menu does not flag every prefab field. PrefabManager.Instance is never null, so it cannot be the gate.
         private static bool IsKnownPrefab(string name) {
             if (Common.Utils.PrefabsAvailable() == false) { return true; }
             return PrefabManager.Instance.GetPrefab(name) != null;
@@ -633,14 +614,6 @@ namespace Deathlink.Death
 
         private static bool IsKnownSkill(string name) {
             return Enum.IsDefined(typeof(Skills.SkillType), name);
-        }
-
-        private static string UniqueEntryKey(ICollection<string> existing, string candidate) {
-            if (existing.Contains(candidate) == false) { return candidate; }
-            for (int i = 2; i < 1000; i++) {
-                if (existing.Contains(candidate + i) == false) { return candidate + i; }
-            }
-            return candidate + Guid.NewGuid().ToString("N").Substring(0, 4);
         }
     }
 }

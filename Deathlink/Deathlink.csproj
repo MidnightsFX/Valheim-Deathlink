@@ -147,15 +147,12 @@
 
          Dropped from the legacy reference list, deliberately:
            AzuExtendedPlayerInventoryAPI - external\AzuExtendedPlayerInventoryAPI.dll
-             does not exist, and is redundant anyway: AzuExtendedPlayerInventory.API
-             and .SlotInfo compile from external\AzuExtendedInventoryAPI\*.cs.
+             does not exist, and nothing calls that mod's API.
            Jotunn, YamlDotNet - now PackageReference.
            Splatform_publicized - its assembly identity is plain "Splatform", which
              collides with the Splatform reference 2.29.2 now supplies (MSB3277, with
-             an arbitrary winner). No source file uses a Splatform type; it only ever
-             existed to satisfy CS0012 on assembly_valheim signatures, which the
-             package's own reference now covers. Takes a seven-deep ..\..\ HintPath
-             with it.
+             an arbitrary winner). The package's own Splatform reference covers the
+             PlatformUserID that OnDeathChanges uses.
            System, System.Core, System.Data, System.Xml, System.Xml.Linq - implicit.
 
          These two are not in the SDK's implicit .NETFramework reference set. -->
@@ -164,7 +161,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The default EmbeddedResource glob is **/*.resx, so both of these have to
+    <!-- The default EmbeddedResource glob is **/*.resx, so all of these have to
          be named explicitly or they vanish from the assembly. None Remove is what
          Visual Studio itself writes when you set Build Action = Embedded Resource
          in an SDK project: the default None glob would otherwise claim them too.
@@ -173,13 +170,15 @@
          "Deathlink.AssetsEmbedded.deathless" by that literal string, and
          AddLocalizations() splits each localization resource name on '.' and takes
          index 2, so "Deathlink.Localizations.English.json" has to keep its exact
-         four-segment shape. Pinning both makes the names independent of
-         RootNamespace, of directory layout, and of any future change to the SDK's
-         resource-naming convention. -->
+         four-segment shape, as does each other language file. Pinning them makes
+         the names independent of RootNamespace, of directory layout, and of any
+         future change to the SDK's resource-naming convention. -->
     <None Remove="AssetsEmbedded\deathless" />
     <None Remove="Localizations\English.json" />
+    <None Remove="Localizations\Vietnamese.json" />
     <EmbeddedResource Include="AssetsEmbedded\deathless" LogicalName="Deathlink.AssetsEmbedded.deathless" />
     <EmbeddedResource Include="Localizations\English.json" LogicalName="Deathlink.Localizations.English.json" />
+    <EmbeddedResource Include="Localizations\Vietnamese.json" LogicalName="Deathlink.Localizations.Vietnamese.json" />
   </ItemGroup>
 
   <!-- Restores the .mdb generation that was lost when publish.ps1 stopped being

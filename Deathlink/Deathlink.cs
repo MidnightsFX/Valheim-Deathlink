@@ -1,4 +1,5 @@
 using BepInEx;
+using BepInEx.Bootstrap;
 using BepInEx.Logging;
 using Deathlink.Common;
 using Deathlink.Death;
@@ -7,11 +8,10 @@ using HarmonyLib;
 using Jotunn.Entities;
 using Jotunn.Managers;
 using Jotunn.Utils;
+using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Reflection;
-using System.Text.RegularExpressions;
 using UnityEngine;
 using static Deathlink.Common.DataObjects;
 
@@ -29,173 +29,109 @@ namespace Deathlink
         public const string PluginName = "Deathlink";
         public const string PluginVersion = "0.13.0";
 
-        public ValConfig cfg;
         internal static AssetBundle EmbeddedResourceBundle;
-        internal static bool AzuEPILoaded = false;
         internal static bool RustyAlmanacClassesLoaded = false;
         internal static bool WackyMMOLoaded = false;
 
-        // Use this class to add your own localization to the game
-        // https://valheim-modding.github.io/Jotunn/tutorials/localization.html
-        // Set in Awake, not here: a static initialiser can run before BepInEx has registered this plugin, and Jotunn
-        // then attributes the whole mod - its RPC names included - to Jotunn itself for the rest of the session.
-        public static CustomLocalization Localization;
         public static ManualLogSource Log;
 
         public void Awake()
         {
             Log = this.Logger;
-            cfg = new ValConfig(Config);
-            // Jotunn comes with its own Logger class to provide a consistent Log style for all mods using it
+            new ValConfig(Config);
             AddLocalizations();
             EmbeddedResourceBundle = AssetUtils.LoadAssetBundleFromResources("Deathlink.AssetsEmbedded.deathless", typeof(Deathlink).Assembly);
             DeathProgressionSkill.SetupDeathSkill();
 
-
-            // API Checks for other mods
-            if (AzuExtendedPlayerInventory.API.IsLoaded()) {
-                AzuEPILoaded = true;
-            }
-            if (BepInExUtils.GetPlugins().Keys.Contains("WackyMole.EpicMMOSystem")) {
-                EpicMMOSystem_API.Init();
-                if (EpicMMOSystem_API.state == EpicMMOSystem_API.API_State.Ready) {
-                    WackyMMOLoaded = true;
-                    Logger.LogInfo("WackMMO API loaded.");
-                } else {
-                    Logger.LogInfo("WackMMO API installed but API not ready.");
+            try {
+                if (Chainloader.PluginInfos.ContainsKey("WackyMole.EpicMMOSystem")) {
+                    EpicMMOSystem_API.Init();
+                    WackyMMOLoaded = EpicMMOSystem_API.state == EpicMMOSystem_API.API_State.Ready;
+                    Logger.LogInfo(WackyMMOLoaded ? "WackMMO API loaded." : "WackMMO API installed but API not ready.");
                 }
+                RustyAlmanacClassesLoaded = Chainloader.PluginInfos.ContainsKey("RustyMods.AlmanacClasses");
+            } catch (Exception e) {
+                Logger.LogWarning($"Could not connect to another mod's API, its integration is off: {e}");
             }
-            if (BepInExUtils.GetPlugins().Keys.Contains("RustyMods.AlmanacClasses")) {
-                RustyAlmanacClassesLoaded = true;
-            } 
 
             Harmony.CreateAndPatchAll(Assembly.GetExecutingAssembly());
-            // Yaml configs. After ValConfig (which owns cfgFolder and the poll/apply intervals) and after
-            // Harmony, so a validator can see anything a patch registered. See Common/Config.
+            // After Harmony, so a validator can see anything a patch registered.
             YamlConfigManager.Init();
-            // The in-game death choice editor, reached from the shared config launcher. After
-            // YamlConfigManager, because it edits a registered file.
+            // After YamlConfigManager, because it edits a registered file.
             DeathChoiceEditor.Init();
             LeaderboardData.Init();
             StartCoroutine(LeaderboardData.SyncLoop());
             TerminalCommands.AddCommands();
             Logger.LogInfo("Death is not the end.");
-            // To learn more about Jotunn's features, go to
-            // https://valheim-modding.github.io/Jotunn/tutorials/overview.html
-
-            //MinimapManager.OnVanillaMapDataLoaded += DeathConfigurationData.CheckAndSetPlayerDeathConfig;
         }
 
         public static DeathChoiceLevel pcfg(){
             return DeathConfigurationData.playerDeathConfiguration;
         }
 
-        // This loads all localizations within the localization directory.
-        // Localizations should be plain JSON objects with each of the two required entries being seperate eg:
-        // "item_sword": "sword-name-here",
-        // "item_sword_description": "sword-description-here",
-        // the localization file itself should be a casematched language as defined by one of the "folder" language names from here:
-        // https://valheim-modding.github.io/Jotunn/data/localization/language-list.html
+        // Each embedded Localizations/<Language>.json is copied to the config folder so it can be edited
+        // there. An edited copy is kept, and only gains the keys a newer release added.
         private void AddLocalizations()
         {
-            Localization = LocalizationManager.Instance.GetLocalization();
+            // Set here, not in a static initialiser: one can run before BepInEx has registered this plugin,
+            // and Jotunn then attributes the whole mod - its RPC names included - to Jotunn itself.
+            CustomLocalization localization = LocalizationManager.Instance.GetLocalization();
 
-            // Ensure localization folder exists
             var translationFolder = Path.Combine(BepInEx.Paths.ConfigPath, "Deathlink", "localizations");
             Directory.CreateDirectory(translationFolder);
-            foreach (string embeddedResouce in typeof(Deathlink).Assembly.GetManifestResourceNames())
+            foreach (string embeddedResource in typeof(Deathlink).Assembly.GetManifestResourceNames())
             {
-                if (!embeddedResouce.Contains("Localizations")) { continue; }
-                // Read the localization file
+                if (!embeddedResource.Contains("Localizations")) { continue; }
 
-                string localization = ReadEmbeddedResourceFile(embeddedResouce);
-                // since I use comments in the localization that are not valid JSON those need to be stripped
-                string cleaned_localization = Regex.Replace(localization, @"\/\/.*", "");
-                Dictionary<string, string> internal_localization = SimpleJson.SimpleJson.DeserializeObject<Dictionary<string, string>>(cleaned_localization);
-                // Just the localization name
-                var localization_name = embeddedResouce.Split('.');
-                if (File.Exists($"{translationFolder}/{localization_name[2]}.json"))
+                string embedded = ReadEmbeddedResourceFile(embeddedResource);
+                // "Deathlink.Localizations.<Language>.json"; the csproj pins these names.
+                string language = embeddedResource.Split('.')[2];
+                string cachedPath = Path.Combine(translationFolder, $"{language}.json");
+                string text = embedded;
+                if (File.Exists(cachedPath))
                 {
-                    string cached_translation_file = File.ReadAllText($"{translationFolder}/{localization_name[2]}.json");
                     try
                     {
-                        Dictionary<string, string> cached_localization = SimpleJson.SimpleJson.DeserializeObject<Dictionary<string, string>>(cached_translation_file);
-                        UpdateLocalizationWithMissingKeys(internal_localization, cached_localization);
-                        Logger.LogDebug($"Reading {translationFolder}/{localization_name[2]}.json");
-                        File.WriteAllText($"{translationFolder}/{localization_name[2]}.json", SimpleJson.SimpleJson.SerializeObject(cached_localization));
-                        string updated_local_translation = File.ReadAllText($"{translationFolder}/{localization_name[2]}.json");
-                        Localization.AddJsonFile(localization_name[2], updated_local_translation);
+                        Dictionary<string, string> cached = SimpleJson.SimpleJson.DeserializeObject<Dictionary<string, string>>(File.ReadAllText(cachedPath));
+                        Dictionary<string, string> current = SimpleJson.SimpleJson.DeserializeObject<Dictionary<string, string>>(embedded);
+                        foreach (KeyValuePair<string, string> entry in current)
+                        {
+                            if (!cached.ContainsKey(entry.Key)) { cached.Add(entry.Key, entry.Value); }
+                        }
+                        text = SimpleJson.SimpleJson.SerializeObject(cached);
                     }
-                    catch
+                    catch (Exception e)
                     {
-                        File.WriteAllText($"{translationFolder}/{localization_name[2]}.json", cleaned_localization);
-                        Logger.LogDebug($"Reading {embeddedResouce}");
-                        Localization.AddJsonFile(localization_name[2], cleaned_localization);
+                        Logger.LogWarning($"Could not read {cachedPath}, replacing it with the built-in {language} text: {e.Message}");
                     }
                 }
-                else
-                {
-                    File.WriteAllText($"{translationFolder}/{localization_name[2]}.json", cleaned_localization);
-                    Logger.LogDebug($"Reading {embeddedResouce}");
-                    Localization.AddJsonFile(localization_name[2], cleaned_localization);
-                }
-                Logger.LogDebug($"Added localization: '{localization_name[2]}'");
+                File.WriteAllText(cachedPath, text);
+                localization.AddJsonFile(language, text);
+                Logger.LogDebug($"Added localization: '{language}'");
             }
         }
 
-        private void UpdateLocalizationWithMissingKeys(Dictionary<string, string> internal_localization, Dictionary<string, string> cached_localization)
-        {
-            if (internal_localization.Keys.Count != cached_localization.Keys.Count)
-            {
-                Logger.LogDebug("Cached localization was missing some entries. They will be added.");
-                foreach (KeyValuePair<string, string> entry in internal_localization)
-                {
-                    if (!cached_localization.ContainsKey(entry.Key))
-                    {
-                        cached_localization.Add(entry.Key, entry.Value);
-                    }
-                }
-            }
-        }
-
-        // This reads an embedded file resouce name, these are all resouces packed into the DLL
-        // they all have a format following this:
-        // ValheimArmory.localizations.English.json
         private string ReadEmbeddedResourceFile(string filename)
         {
             using (var stream = typeof(Deathlink).Assembly.GetManifestResourceStream(filename))
+            using (var reader = new StreamReader(stream))
             {
-                using (var reader = new StreamReader(stream))
-                {
-                    return reader.ReadToEnd();
-                }
+                return reader.ReadToEnd();
             }
         }
 
-        /// <summary>
-        /// Fisher-Yates style list sort for string lists.
-        /// </summary>
-        /// <param name="inputList"></param>
-        /// <returns></returns>
+        // Fisher-Yates shuffle into a new list; the input is left as it was.
         public static List<T> shuffleList<T>(List<T> inputList)
-        {    //take any list of GameObjects and return it with Fischer-Yates shuffle
-            int i = 0;
-            int t = inputList.Count;
-            int r = 0;
-            T p = default(T);
-            List<T> tempList = new List<T>();
-            tempList.AddRange(inputList);
-
-            while (i < t)
+        {
+            List<T> shuffled = new List<T>(inputList);
+            for (int i = 0; i < shuffled.Count; i++)
             {
-                r = UnityEngine.Random.Range(i, tempList.Count);
-                p = tempList[i];
-                tempList[i] = tempList[r];
-                tempList[r] = p;
-                i++;
+                int r = UnityEngine.Random.Range(i, shuffled.Count);
+                T swap = shuffled[i];
+                shuffled[i] = shuffled[r];
+                shuffled[r] = swap;
             }
-
-            return tempList;
+            return shuffled;
         }
     }
 }

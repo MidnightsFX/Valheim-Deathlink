@@ -1,3 +1,18 @@
+  **0.14.0**
+---
+```
+- Stops modified clients from resetting other players' death choices, changing the server's death choices without admin rights, or meddling with other players' tombstone recovery.
+- Fixes the Mod Config button sometimes showing in a different language from the game.
+- Adds a Vietnamese translation.
+- Fixes kept items being lost when a player dies again, quits, crashes or has a full inventory before choosing them.
+- Fixes the reset command not reaching players on crossplay servers
+- Resource bonuses now apply only to kills or harvesting as configured, and single-piece ore deposits now get harvest bonuses too.
+- Bonus loot from kills now drops together with the creature's other loot.
+- Fixes a new character's first life being recorded far too long on the leaderboard, and another server's leaderboard being saved into your own.
+- Fixes the editor misreading decimals on systems that use a comma, and not updating when skill loss is toggled.
+- Fixes the leaderboard staying open on other compendium pages.
+```
+
   **0.13.0**
 ---
 ```

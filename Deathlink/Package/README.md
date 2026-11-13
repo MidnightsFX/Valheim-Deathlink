@@ -21,8 +21,15 @@ A visual configuration UI is also available (to admins), allowing complete editi
 ![quickconfig](https://github.com/MidnightsFX/Valheim-Deathlink/blob/master/art/QuickConfigure.png?raw=true)
 
 Each of these configuration sections below can be applied to any number of profiles which users can select.
-Deathlink selection is one per character and is stored on the server the character is on,a character can have
-different selections in singleplayer or multiplayer.
+Each character picks one, and by default the choice is stored on the character, so it follows them to every
+world. With `UsePrivateKeysForDeathChoice = false` choices are instead kept in the server's
+`CharacterSettings.yaml`, so a character can have different choices on different servers.
+
+The server's BepInEx config (`MidnightsFX.Deathlink.cfg`) has the other settings, each with a description.
+The ones most servers change are `DefaultDeathChoice` (a level new characters get without being asked),
+`AllowedDeathChoiceChanges` (how often a player may change their choice from the compendium),
+`ItemsNotSkillChecked` (items handled by `NonSkillCheckedItemAction` instead of the death style) and
+`EnableLeaderboard`.
 
 `DeathChoices.yaml` is written with a full explanation of every setting at the top of the file, so you can
 configure it without coming back here. Edits are picked up while the game is running and are pushed to
@@ -93,10 +100,19 @@ Rougelike3:
 Deathstyle configuration governs what happens when you die.
 
 ```yaml
+  DisplayName: Berserker                   # The name players see when choosing
+  DamageTakenModifier: 1.15                # Multiplies damage the player takes, 1.15 is 15% more
+  DamageDoneModifier: 1.1                  # Multiplies damage the player deals
   DeathStyle:
     FoodLossOnDeath: true                  # Player will loose food on death or not
     FoodLossUsesDeathlink: true            # Food loss is based on skill level from loosing all foods, to none
-    MaxEquipmentKept: 3                    # The maximum number of equiped items to keep on death
+    MinEquipmentKept: 0                    # Equipment kept at 0% Deathlink skill
+    MaxEquipmentKept: 3                    # Equipment kept at 100% Deathlink skill
+    MinItemsKept: 0                        # Other items kept at 0% Deathlink skill
+    MaxItemsKept: 10                       # Other items kept at 100% Deathlink skill
+    EnableItemSavingChoices: true          # DeathlinkBased only: let the player pick some of what is kept
+    MinItemsKeptChoices: 0                 # Items the player may pick at 0% Deathlink skill, the rest are random
+    MaxItemsKeptChoices: 2                 # Items the player may pick at 100% Deathlink skill
     SkillLossOnDeath: true                 # Whether or not skill loss occurs on death
     MaxSkillLossPercentage: 0.2            # The maximum percentage of skill lost on death (you start here, example is 20%)
     MinSkillLossPercentage: 0.05           # The minimum skill loss, at max skill level (example is 5%)
@@ -105,8 +121,8 @@ Deathstyle configuration governs what happens when you die.
     ItemSavedStyle: Tombstone              # Items that are saved can be: OnCharacter, Tombstone
     EquipmentSavedStyle: OnCharacter       # Where saved equipment goes: SameAsItems (default, follows ItemSavedStyle), OnCharacter, Tombstone
   DeathSkillRate: 1                        # Rate at which Deathlink skill increases, higher is faster
-  Fallback: true                           # Marks the level players are moved to when the one they had
-                                           # selected is renamed or removed. Set it on exactly one level.
+  Fallback: true                           # Used when a player's level is renamed or removed, unless
+                                           # DefaultDeathChoice names a level. Set it on exactly one level.
 ```
 
 #### Choosing gear from the tombstone
@@ -142,8 +158,8 @@ ResourceModifiers:
       - YggdrasilWood
       - Blackwood
       BonusModifier: 1.5       # The bonus modifier, larger is more, 1.5 is 50% more
-      BonusActions:           # List of actions that will trigger this bonus can be Kills or Harvesting
-      - Harvesting
+      BonusActions:           # Kills (creature drops), Harvesting (trees, rocks, pickables) or both.
+      - Harvesting            # Leave it out to apply to both.
     Ore:
       Prefabs:
       - CopperOre
@@ -178,7 +194,7 @@ Death loot configuration provides a way to gain additional items on kills, speci
       Prefab: AmberPearl      # The prefab name of the item to drop
       Chance: 0.05            # The base chance of the item dropping, 0.05 is 5%
       Amount: 1               # The amount of the item to drop
-      BonusActions:           # List of actions that will trigger this bonus can be Kills or Harvesting
+      BonusActions:           # Kills, Harvesting or both. Leave it out to apply to both.
       - Kills
 ```
 
@@ -187,11 +203,15 @@ You or someone you play with has made a terrible choice, they thought they were 
 
 Well! There is a solution! As an admin you can reset yours or other players death choices, ensure that you have the console enabled by setting your launch paramters in your mod manager to include `-console`
 
-In game run the command `dl-reset-choice [playername]` eg: `dl-reset-choice Midnight` or `dl-reset-choice 91231230123`. This command will clear the players choice from the server, and remove their choice from their character.
-They should open their inventory again to select a new choice.
+In game run the command `dl-reset-choice [name or ID]` eg: `dl-reset-choice Midnight` or `dl-reset-choice 91231230123`. It matches a character name, an account name or a platform ID of a player who is online.
+The command clears their choice and how many times they have changed it. If `DefaultDeathChoice` is set they are given that level straight away; otherwise they choose again the next time they open their inventory.
 
 If you are having trouble matching an existing player in the game, be sure to turn logging on for Deathlink, and validate the steam ID or player name you are using matches a player in the game.
 
+
+### Compatibility
+AzuExtendedPlayerInventory: its extra rows, equipment slots and quick slots follow the same death rules as the rest
+of the inventory, and graves hold them like any other item.
 
 ### Localization
 External localization can be configured at `BepInEx\config\Deathlink\localizations`. This folder and the default localization will be generated and added the first time this mod runs.
@@ -203,5 +223,8 @@ Got a bug to report or just want to chat about the mod? Drop by the discord or g
 [![discord logo](https://i.imgur.com/uE6umQE.png)](https://discord.gg/Dmr9PQTy9m)
 [![github logo](https://i.imgur.com/lvbP5OF.png)](https://github.com/MidnightsFX/valheim_rougelite)
 
+---
 
+If you enjoy my mods donations are appreciated. My mods will never be paid and donations are not required.
 
+<a href="https://ko-fi.com/midnightsfx"><img height="36" src="https://storage.ko-fi.com/cdn/kofi2.png?v=3" alt="Support me on Ko-fi"></a>

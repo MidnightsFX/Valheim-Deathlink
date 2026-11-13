@@ -1,13 +1,7 @@
 using BepInEx;
 using BepInEx.Configuration;
 using Deathlink.Death;
-using Jotunn;
-using Jotunn.Entities;
-using Jotunn.Managers;
-using System;
-using System.Collections;
 using System.IO;
-using static ZNet;
 
 namespace Deathlink.Common;
 
@@ -25,7 +19,6 @@ public class ValConfig
     public static ConfigEntry<bool> UsePrivateKeysForDeathChoice;
     public static ConfigEntry<string> DefaultDeathChoice;
     public static ConfigEntry<int> AllowedDeathChoiceChanges;
-    //public static ConfigEntry<bool> EffectRemovalOnDeath;
     public static ConfigEntry<bool> EnableAlmanacClassesXPLossOnDeath;
     public static ConfigEntry<float> AlmanacClassesXPLossScale;
     public static ConfigEntry<float> AlmanacClassesXPGainScale;
@@ -39,54 +32,28 @@ public class ValConfig
     public static ConfigEntry<float> ConfigPollIntervalSeconds;
     public static ConfigEntry<bool> ShowQuickConfigButton;
 
-    // Read by Common/Config. Derived from the plugin so it cannot drift from the mod's name.
     internal static readonly string cfgFolder = Deathlink.PluginName;
     const string leaderboardCfg = "leaderboard.yaml";
-    internal static String leaderboardPath = Path.Combine(Paths.ConfigPath, cfgFolder, leaderboardCfg);
-
-    // DeathChoices.yaml and CharacterSettings.yaml are owned by Common/Config -- paths, defaults,
-    // watching, validation and the sync RPCs all come from there. See DeathlinkConfigFiles.cs.
-    public static CustomRPC resetChoiceRPC;
+    internal static string leaderboardPath = Path.Combine(Paths.ConfigPath, cfgFolder, leaderboardCfg);
 
     public static ConfigEntry<float> SkillProgressUpdateCheckInterval;
 
     public ValConfig(ConfigFile Config)
     {
-        // ensure all the config values are created
         cfg = Config;
-        cfg.SaveOnConfigSet = true;
         CreateConfigValues(Config);
-        SetupConfigRPCs();
-
-        // A client must not reload: Jotunn has already replaced its in-memory values with the server's,
-        // and a reload would clobber them with whatever this machine has on disk.
+        LeaderboardData.SetupRPC();
         ConfigFileWatcher.Register(cfg.ConfigFilePath, OnMainConfigFileChanged);
     }
 
     private static void OnMainConfigFileChanged(string _) {
-        if (ZNet.instance == null || ZNet.instance.IsServer() == false) { return; }
+        // A connected client must not reload: Jotunn has already replaced its in-memory values with the
+        // server's, and a reload would clobber them with whatever this machine has on disk.
+        if (ZNet.instance != null && ZNet.instance.IsServer() == false) { return; }
         Logger.LogInfo("Configuration file has been changed, reloading settings.");
         cfg.Reload();
     }
 
-    public static string GetSecondaryConfigDirectoryPath() {
-        var patchesFolderPath = Path.Combine(Paths.ConfigPath, cfgFolder);
-        var dirInfo = Directory.CreateDirectory(patchesFolderPath);
-
-        return dirInfo.FullName;
-    }
-
-    public void SetupConfigRPCs()
-    {
-        // Resetting a player's choice is a targeted admin action against a person, not a config file, so
-        // it stays here rather than moving into the config framework.
-        resetChoiceRPC = NetworkManager.Instance.AddRPC("DEATHLK_RESET", OnServerRecieveResetRPC, OnClientRecieveResetRPC);
-
-        LeaderboardData.SetupRPC();
-        DeathSavingOptions.SetupRPC();
-    }
-
-    // Create Configuration and load it.
     private void CreateConfigValues(ConfigFile Config)
     {
         ItemsNotSkillChecked = BindServerConfig("DeathProgression", "ItemsNotSkillChecked", "Tin,TinOre,Copper,CopperOre,CopperScrap,Bronze,Iron,IronScrap,Silver,SilverOre,DragonEgg,chest_hildir1,chest_hildir2,chest_hildir3,BlackMetal,BlackMetalScrap,DvergrNeedle,MechanicalSpring,FlametalNew,FlametalOreNew", "List of items that are not rolled to be saved through death progression.");
@@ -101,7 +68,7 @@ public class ValConfig
 
         ShowDeathMapMarker = BindServerConfig("DeathTweaks", "ShowDeathMapMarker", true, "Whether or not a map marker is placed on your death location.");
 
-        UsePrivateKeysForDeathChoice = BindServerConfig("Config", "UsePrivateKeysForDeathChoice", true, "If true, death configuration is stored and checked as a private key on the player. Key value is synced when connecting to a server. False uses the yaml configuration flatfile.", advanced: true);
+        UsePrivateKeysForDeathChoice = BindServerConfig("Config", "UsePrivateKeysForDeathChoice", true, "If true, each character's death choice is stored on the character and follows it to every world. False keeps choices in this server's CharacterSettings.yaml instead.", advanced: true);
 
         DefaultDeathChoice = BindServerConfig("Config", "DefaultDeathChoice", "", "Death choice key (eg. Vanilla, Rougelike1) that new players are automatically assigned the first time they join, skipping the selection popup. Leave empty to show the selection popup instead.");
         AllowedDeathChoiceChanges = BindServerConfig("Config", "AllowedDeathChoiceChanges", 1, "How many times a player may change their Deathlink choice from the compendium. 0 disables the change button.", valmin: 0, valmax: 10);
@@ -113,180 +80,59 @@ public class ValConfig
         WackyMMOXPLossScale = BindServerConfig("ModIntegrations", "WackyMMOXPLossScale", 1.0f, "How strong the XP loss for WackyMMO is, lower = less XP loss, higher = more XP loss.");
         WackyMMOXPGainScale = BindServerConfig("ModIntegrations", "WackyMMOXPGainScale", 1.0f, "How strong the XP gain for WackyMMO is, lower = less XP gain, higher = more XP gain.");
 
-        EnableLeaderboard = BindServerConfig("Leaderboard", "EnableLeaderboard", true, "Whether the server-tracked leaderboard (shown in the Trophies tab) is enabled.");
+        EnableLeaderboard = BindServerConfig("Leaderboard", "EnableLeaderboard", true, "Whether the server-tracked leaderboard (opened from a button on the Deathlink compendium page) is enabled.");
         LeaderboardSyncInterval = BindServerConfig("Leaderboard", "LeaderboardSyncInterval", 30f, "How often (in minutes) clients report their stats to the server and the server broadcasts the leaderboard back to clients.", false, 5f, 120f);
 
-        // Read by Common/Config. The poll interval drives how quickly a hand edit to DeathChoices.yaml is
-        // noticed; the apply delay coalesces the two writes most editors make when saving one file.
-        ConfigPollIntervalSeconds = BindServerConfig("Config", "Config Poll Interval", 30f, "Seconds between checks for edits to this mod's yaml config files and its BepInEx config file. Lower reacts faster to a hand edit, higher does less disk work.", true, 1f, 300f);
-        ConfigApplyDelay = BindServerConfig("Config", "Config Apply Delay", 1f, "Delay in seconds before a changed config file is applied in-game. Coalesces a burst of rapid edits into a single apply. Set to 0 to apply instantly.", true, 0f, 10f);
+        ConfigPollIntervalSeconds = BindServerConfig("Config", "Config Poll Interval", 30f, "Seconds between checks for edits to this mod's yaml config files and its BepInEx config file. A connected client keeps the server's values until it leaves. Lower reacts faster to a hand edit, higher does less disk work.", true, 1f, 300f);
+        ConfigApplyDelay = BindServerConfig("Config", "Config Apply Delay", 1f, "Delay in seconds before a changed yaml config file is applied in-game. Coalesces a burst of rapid edits into a single apply. Set to 0 to apply instantly.", true, 0f, 10f);
 
-        // Per-machine UI preference, so a plain client bind rather than BindServerConfig: this decides
-        // whether Deathlink appears in the shared config launcher, not how the game plays.
+        // A per-machine UI preference, so a plain client bind rather than BindServerConfig.
         ShowQuickConfigButton = Config.Bind("Client config", "ShowQuickConfigButton", true,
             new ConfigDescription("Show Deathlink in the shared in-game config launcher (bottom right of the main and pause menus).",
             null,
             new ConfigurationManagerAttributes { }));
         ShowQuickConfigButton.SettingChanged += (sender, args) => Death.DeathChoiceEditor.ApplyRegistration();
 
-        // Debugmode
         EnableDebugMode = Config.Bind("Client config", "EnableDebugMode", false,
             new ConfigDescription("Enables Debug logging.",
             null,
             new ConfigurationManagerAttributes { IsAdvanced = true }));
-        EnableDebugMode.SettingChanged += Logger.enableDebugLogging;
-        Logger.CheckEnableDebugLogging();
+        EnableDebugMode.SettingChanged += (sender, args) => Logger.UpdateLogLevel();
+        Logger.UpdateLogLevel();
     }
 
-    private static IEnumerator OnServerRecieveResetRPC(long sender, ZPackage package)
+    public static ConfigEntry<bool> BindServerConfig(string category, string key, bool value, string description, bool advanced = false)
     {
-        string platformID = package.ReadString();
-        Logger.LogInfo($"Received reset request for platform ID {platformID} from sender {sender}.");
-        // Find the target charID, peer UID, and the local player's platform ID in one pass
-        long charID = 0L;
-        long targetPeerUID = 0L;
-        string localPlayerPlatformId = "";
-        foreach (ZNet.PlayerInfo player in ZNet.instance.GetPlayerList()) {
-            Logger.LogInfo($"Checking player {player.m_userInfo.m_displayName} with platform ID {player.m_userInfo.m_id.m_userID} and character ID {player.m_characterID.ID} | requested: {platformID}");
-            if (player.m_characterID.ID == 0) {
-                Logger.LogWarning($"Player {player.m_userInfo.m_displayName} has an invalid character ID of 0. This player is invalid and will be skipped.");
-                continue;
-            }
-            long pCharID = player.m_characterID.ID;
-            if (pCharID == 0L) {
-                ZDO zDO = ZDOMan.instance.GetZDO(player.m_characterID);
-                pCharID = zDO.GetLong(ZDOVars.s_playerID, 0L);
-            }
-            if (player.m_userInfo.m_id.m_userID == platformID) {
-                Logger.LogInfo($"Match found for player {player.m_userInfo.m_displayName} with platform ID {platformID} and character ID {pCharID}.");
-                charID = pCharID;
-                if (DeathConfigurationData.playerSettings.ContainsKey(charID)) {
-                    Logger.LogInfo($"Removing stored death configuration for character ID {charID}.");
-                    DeathConfigurationData.playerSettings.Remove(charID);
-                }
-                foreach(ZNetPeer peer in ZNet.instance.GetPeers()) {
-                    if (peer.m_socket != null && peer.m_socket.GetHostName() == platformID) {
-                        Logger.LogInfo($"Match found for peer {peer.m_playerName} with UID {peer.m_uid} and platform ID {platformID}. Setting targetPeerUID for reset RPC.");
-                        targetPeerUID = peer.m_uid;
-                        break;
-                    }
-                }
-            }
-
-            try {
-                // This is only for handling hosted local server resets
-                if (Player.m_localPlayer != null && player.m_characterID == Player.m_localPlayer.m_nview.GetZDO().m_uid) {
-                    localPlayerPlatformId = player.m_userInfo.m_id.m_userID;
-                }
-            } catch {
-                Logger.LogWarning($"Failed to get platform ID for player {player.m_userInfo.m_displayName} with character ID {player.m_characterID.ID}. This may cause issues with resetting death choices for the local player.");
-            }
-        }
-        DeathConfigurationData.WritePlayerChoices();
-
-        Logger.LogInfo($"Reset requested for platform ID {platformID} (charID: {charID}, peerUID: {targetPeerUID}), local platform ID: {localPlayerPlatformId}.");
-
-        if (!string.IsNullOrEmpty(localPlayerPlatformId) && localPlayerPlatformId == platformID) {
-            // The reset target is the host's own local player. The host is not a remote peer, so
-            // there is nothing to forward to; apply the reset directly on this machine.
-            DeathConfigurationData.ResetLocalPlayerChoice();
-        } else if (targetPeerUID != 0L) {
-            ZPackage fwdPackage = new ZPackage();
-            fwdPackage.Write(platformID);
-            resetChoiceRPC.SendPackage(targetPeerUID, fwdPackage);
-        } else {
-            Logger.LogWarning($"No connected target found for platform ID {platformID}; reset was not delivered to any client.");
-        }
-
-        yield return null;
-    }
-
-    private static IEnumerator OnClientRecieveResetRPC(long sender, ZPackage package)
-    {
-        Logger.LogInfo("Reset requested for local players death choice.");
-        DeathConfigurationData.ResetLocalPlayerChoice();
-
-        yield return null;
-    }
-
-    /// <summary>
-    ///  Helper to bind configs for bool types
-    /// </summary>
-    /// <param name="config_file"></param>
-    /// <param name="catagory"></param>
-    /// <param name="key"></param>
-    /// <param name="value"></param>
-    /// <param name="description"></param>
-    /// <param name="acceptableValues"></param>>
-    /// <param name="advanced"></param>
-    /// <returns></returns>
-    public static ConfigEntry<bool> BindServerConfig(string catagory, string key, bool value, string description, AcceptableValueBase acceptableValues = null, bool advanced = false)
-    {
-        return cfg.Bind(catagory, key, value,
+        return cfg.Bind(category, key, value,
             new ConfigDescription(description,
-                acceptableValues,
+            null,
             new ConfigurationManagerAttributes { IsAdminOnly = true, IsAdvanced = advanced })
             );
     }
 
-    /// <summary>
-    /// Helper to bind configs for int types
-    /// </summary>
-    /// <param name="config_file"></param>
-    /// <param name="catagory"></param>
-    /// <param name="key"></param>
-    /// <param name="value"></param>
-    /// <param name="description"></param>
-    /// <param name="advanced"></param>
-    /// <param name="valmin"></param>
-    /// <param name="valmax"></param>
-    /// <returns></returns>
-    public static ConfigEntry<int> BindServerConfig(string catagory, string key, int value, string description, bool advanced = false, int valmin = 0, int valmax = 150)
+    public static ConfigEntry<int> BindServerConfig(string category, string key, int value, string description, bool advanced = false, int valmin = 0, int valmax = 150)
     {
-        return cfg.Bind(catagory, key, value,
+        return cfg.Bind(category, key, value,
             new ConfigDescription(description,
             new AcceptableValueRange<int>(valmin, valmax),
             new ConfigurationManagerAttributes { IsAdminOnly = true, IsAdvanced = advanced })
             );
     }
 
-    /// <summary>
-    /// Helper to bind configs for float types
-    /// </summary>
-    /// <param name="config_file"></param>
-    /// <param name="catagory"></param>
-    /// <param name="key"></param>
-    /// <param name="value"></param>
-    /// <param name="description"></param>
-    /// <param name="advanced"></param>
-    /// <param name="valmin"></param>
-    /// <param name="valmax"></param>
-    /// <returns></returns>
-    public static ConfigEntry<float> BindServerConfig(string catagory, string key, float value, string description, bool advanced = false, float valmin = 0, float valmax = 150)
+    public static ConfigEntry<float> BindServerConfig(string category, string key, float value, string description, bool advanced = false, float valmin = 0, float valmax = 150)
     {
-        return cfg.Bind(catagory, key, value,
+        return cfg.Bind(category, key, value,
             new ConfigDescription(description,
             new AcceptableValueRange<float>(valmin, valmax),
             new ConfigurationManagerAttributes { IsAdminOnly = true, IsAdvanced = advanced })
             );
     }
-    
-    /// <summary>
-    /// Helper to bind configs for strings
-    /// </summary>
-    /// <param name="config_file"></param>
-    /// <param name="catagory"></param>
-    /// <param name="key"></param>
-    /// <param name="value"></param>
-    /// <param name="description"></param>
-    /// <param name="advanced"></param>
-    /// <returns></returns>
-    public static ConfigEntry<string> BindServerConfig(string catagory, string key, string value, string description, AcceptableValueList<string> acceptableValues = null, bool advanced = false)
+
+    public static ConfigEntry<string> BindServerConfig(string category, string key, string value, string description, bool advanced = false)
     {
-        return cfg.Bind(catagory, key, value,
-            new ConfigDescription(
-                description,
-                acceptableValues,
+        return cfg.Bind(category, key, value,
+            new ConfigDescription(description,
+            null,
             new ConfigurationManagerAttributes { IsAdminOnly = true, IsAdvanced = advanced })
             );
     }

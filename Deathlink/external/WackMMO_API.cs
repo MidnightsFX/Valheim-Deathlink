@@ -8,55 +8,22 @@ namespace Deathlink.external
         public static API_State state = API_State.NotReady;
         private static MethodInfo eGetLevel;
         private static MethodInfo eAddExp;
-        private static MethodInfo eGetAttribute;
-        private static MethodInfo eGetAttributeRusty;
-        private static MethodInfo eSetSingleRate;
-
 
         public enum API_State
         {
             NotReady, NotInstalled, Ready,
         }
 
-        public enum Attribut
-        {
-            Strength = 0, Agility = 1, Intellect = 2, Body = 3, Vigour = 4, Special = 5,
-        }
-
         public static int GetLevel()
         {
-            int result = 0;
             Init();
-            if (eGetLevel != null) result = (int)eGetLevel.Invoke(null, null);
-            return result;
+            return eGetLevel != null ? (int)eGetLevel.Invoke(null, null) : 0;
         }
-
-        public static int GetAttribute(Attribut attribute)
-        {
-            int result = 0;
-            Init();
-            if (eGetAttribute != null) result = (int)eGetAttribute.Invoke(null, new object[] { attribute });
-            return result;
-        }
-        public static int GetAttributeRusty(string attribute)
-        {
-            int result = 0;
-            Init();
-            if (eGetAttributeRusty != null) result = (int)eGetAttributeRusty.Invoke(null, new object[] { attribute });
-            return result;
-        }
-
 
         public static void AddExp(int value)
         {
             Init();
             eAddExp?.Invoke(null, new object[] { value });
-        }
-
-        public static void SetSingleRate(float rate)
-        {
-            Init();
-            eSetSingleRate?.Invoke(null, new object[] { rate });
         }
 
         public static void Init()
@@ -68,14 +35,12 @@ namespace Deathlink.external
                 return;
             }
 
-            state = API_State.Ready;
-
+            // Resolved before claiming Ready, so an EpicMMOSystem update that moves its API leaves this
+            // disabled instead of throwing from Awake and taking Deathlink down with it.
             Type actionsMO = Type.GetType("API.EMMOS_API, EpicMMOSystem");
-            eGetLevel = actionsMO.GetMethod("GetLevel", BindingFlags.Public | BindingFlags.Static);
-            eAddExp = actionsMO.GetMethod("AddExp", BindingFlags.Public | BindingFlags.Static);
-            eGetAttribute = actionsMO.GetMethod("GetAttribute", BindingFlags.Public | BindingFlags.Static);
-            eGetAttributeRusty = actionsMO.GetMethod("GetAttribute", BindingFlags.Public | BindingFlags.Static);
-            eSetSingleRate = actionsMO.GetMethod("SetSingleRate", BindingFlags.Public | BindingFlags.Static);
+            eGetLevel = actionsMO?.GetMethod("GetLevel", BindingFlags.Public | BindingFlags.Static);
+            eAddExp = actionsMO?.GetMethod("AddExp", BindingFlags.Public | BindingFlags.Static);
+            state = eGetLevel != null && eAddExp != null ? API_State.Ready : API_State.NotInstalled;
         }
     }
 }

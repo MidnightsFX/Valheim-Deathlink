@@ -48,8 +48,8 @@ namespace Deathlink.Common {
         internal bool ClientWritesToDisk { get; set; }
         internal bool Watch { get; set; } = true;
         // Set when Validate looks up prefabs. The prefab table does not exist during Awake, so the mod
-        // re-runs validation from PrefabManager.OnPrefabsRegistered rather than emitting a wall of false
-        // "not found" warnings at startup.
+        // re-runs validation through YamlConfigManager.RevalidatePrefabDependent once it does, rather than
+        // emitting a wall of false "not found" warnings at startup.
         internal bool NeedsPrefabs { get; set; }
         // 0 means unversioned. When set, GetSchemaVersion must also be supplied.
         internal int SchemaVersion { get; set; }
@@ -62,13 +62,15 @@ namespace Deathlink.Common {
 
         internal string Path { get; set; }
         internal CustomRPC Rpc { get; set; }
-        // Only created when AllowAdminEdit is set. Carries admin uploads up and the accept/refuse answer
-        // back down.
-        internal CustomRPC EditRpc { get; set; }
         internal bool LastLoadFailed { get; set; }
         internal string LastError { get; set; }
         internal DateTime LastLoadedUtc { get; set; }
         internal ValidationReport LastReport { get; set; }
+        // The text Value was applied from, which is what peers are sent. Not the file on disk: that can hold an
+        // edit that failed to load (under KeepLastGood the owner keeps its last good values while the broken text
+        // sits there) or miss an edit whose write failed. Null when Value is not that text as-is -- defaults, a
+        // migration, a runtime change written back -- and the sync then serializes Value instead.
+        internal string LastAppliedText { get; set; }
 
         internal YamlFormat EffectiveFormat {
             get { return Format ?? YamlFormat.Default; }
@@ -79,6 +81,9 @@ namespace Deathlink.Common {
         internal abstract string SerializeCurrent();
         internal abstract bool LoadFrom(string yaml, ConfigOrigin origin);
         internal abstract ValidationReport Revalidate();
+        // For a load that threw instead of failing: Fail never ran, so nothing may have been published at all.
+        // Publishes the built-in defaults when no value exists yet; never touches the file.
+        internal abstract void UseDefaultsIfUnloaded();
 
         // Parse and validate some candidate yaml WITHOUT applying any of it: nothing is assigned, nothing
         // is published, nothing is written, and none of the Last* fields move.
@@ -186,6 +191,12 @@ namespace Deathlink.Common {
             return report;
         }
 
+        internal override void UseDefaultsIfUnloaded() {
+            if (Value != null) { return; }
+            LastLoadFailed = true;
+            PublishDefaults();
+        }
+
         internal override bool LoadFrom(string yaml, ConfigOrigin origin) {
             string reason;
             T parsed = null;
@@ -235,6 +246,8 @@ namespace Deathlink.Common {
             LastLoadFailed = false;
             LastError = null;
             LastLoadedUtc = DateTime.UtcNow;
+            // A migrated value no longer matches the text it came from.
+            LastAppliedText = changedByMigration ? null : yaml;
             Publish();
 
             // Persist a migration, but only on the machine that owns the file. Without this the
@@ -376,6 +389,7 @@ namespace Deathlink.Common {
             T defaults = BuildDefaults();
             if (defaults == null) { return; }
             Value = defaults;
+            LastAppliedText = null;
             Publish();
         }
 

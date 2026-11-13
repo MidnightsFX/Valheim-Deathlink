@@ -1,12 +1,11 @@
-﻿using System;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Linq;
 
 namespace Deathlink.Common;
 
 public static class Extensions
 {
-    private static readonly List<ItemDrop.ItemData.ItemType> EquipmentTypes = new List<ItemDrop.ItemData.ItemType>()
+    private static readonly HashSet<ItemDrop.ItemData.ItemType> EquipmentTypes = new HashSet<ItemDrop.ItemData.ItemType>()
         {
             ItemDrop.ItemData.ItemType.Chest,
             ItemDrop.ItemData.ItemType.Hands,
@@ -31,11 +30,5 @@ public static class Extensions
     public static List<ItemDrop.ItemData> GetNotEquipment(this List<ItemDrop.ItemData> list)
     {
         return list.Where(x => !EquipmentTypes.Contains(x.m_shared.m_itemType) ).ToList();
-    }
-
-    public static bool IsEquipment(this ItemDrop.ItemData item)
-    {
-        if (EquipmentTypes.Contains(item.m_shared.m_itemType)) { return true; }
-        return false;
     }
 }

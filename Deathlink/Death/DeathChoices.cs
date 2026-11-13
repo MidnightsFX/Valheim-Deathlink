@@ -1,7 +1,6 @@
 ﻿using Deathlink.Common;
 using HarmonyLib;
 using Jotunn.Managers;
-using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -16,19 +15,15 @@ namespace Deathlink.Death
         public static class ShowDeathChoiceUI {
             public static void Postfix(InventoryGui __instance) {
                 if (ValConfig.UsePrivateKeysForDeathChoice.Value) {
-                    if (Player.m_localPlayer != null && Player.m_localPlayer.PlayerHasUniqueKey(DeathChoiceKey)) { return; }
+                    if (Player.m_localPlayer != null && Player.m_localPlayer.TryGetUniqueKeyValue(DeathChoiceKey, out _)) { return; }
                 } else {
                     if (Player.m_localPlayer != null && DeathConfigurationData.playerSettings.ContainsKey(Player.m_localPlayer.GetPlayerID())) { return; }
                 }
-                
-                // Route through the persistent singleton holder only. Attaching the component to the
-                // InventoryGui GameObject (which is torn down and recreated on world reload) produced a
-                // second DeathChoiceUI instance and a second ToggleGroup over the same static state,
-                // which is what desynced the highlighted choice from the saved one.
+
+                // Only the persistent singleton: a second copy on InventoryGui (rebuilt on world reload) desyncs the shown choice from the saved one.
                 DeathChoiceUI.Instance.Show();
             }
         }
-
 
         [HarmonyPatch(typeof(InventoryGui), nameof(InventoryGui.Hide))]
         public static class HideDeathChoiceUI {
@@ -36,7 +31,6 @@ namespace Deathlink.Death
                 if (DeathChoiceUI.IsInitialized) { DeathChoiceUI.Instance.Hide(); }
             }
         }
-        
     }
 
     public class DeathChoices
@@ -58,22 +52,16 @@ namespace Deathlink.Death
             public static bool IsInitialized => _instance != null;
 
             private static GameObject DeathChoicePanel;
-            private static GameObject ChoicesScrollView;
             private static GameObject ChoicesContent;
             private static GameObject ChoicesContainer;
-            private static GameObject manualCloseButton;
-            private static GameObject selectChoiceButton;
             private static TextMeshProUGUI DeathPenaltyDescription;
             private static Text CombatModifiersDescription;
             private static Text XPModifiersDescription;
             private static Text LootModifersDescription;
             private static Text HarvestModifiersDescription;
 
-            private static List<Toggle> difficultyToggles = new List<Toggle>();
             private static ToggleGroup choiceGroup;
             private static string selectedDeathChoice = "none";
-            // True when the panel was opened from the compendium "change my choice" button,
-            // which consumes one of the player's allowed changes on selection.
             private static bool isChangeMode = false;
 
             public void Awake()
@@ -88,40 +76,34 @@ namespace Deathlink.Death
                     CreateStaticUIObjects();
                     SetChoiceList();
                 }
+                if (DeathChoicePanel == null) { return; }
+                ClearSelection();
                 DeathChoicePanel.SetActive(true);
             }
 
-            // Opens the selection panel as a one-time change initiated by the player. Selecting a
-            // choice from here consumes one of the player's allowed changes.
+            // Otherwise Select would take whatever was highlighted the last time the panel was open.
+            private static void ClearSelection() {
+                selectedDeathChoice = "none";
+                if (choiceGroup != null) { choiceGroup.SetAllTogglesOff(); }
+            }
+
+            // Selecting a choice from here uses up one of the player's allowed changes.
             public void ShowForChange() {
                 isChangeMode = true;
                 Show();
             }
 
             public void Hide() {
-                // Logger.LogDebug("Closing");
                 if (DeathChoicePanel != null) {
                     DeathChoicePanel.SetActive(false);
                 }
                 isChangeMode = false;
-                GUIManager.BlockInput(false);
             }
 
-            // Repopulate from whatever DeathConfigurationData.DeathLevels now holds.
-            //
-            // Without this the selection list is only ever built at Awake and on Show, so after a hand
-            // edit, a server broadcast or an in-game edit the panel can still be offering levels that no
-            // longer exist. Called from the config file's Apply hook, which covers all three routes.
-            internal void RebuildChoiceList() {
-                if (ChoicesContent == null) { return; }
-                SetChoiceList();
-            }
-
-            // No-op when the panel has never been built, so this never forces the singleton into
-            // existence just to refresh something nobody has looked at.
+            // Called when the death levels reload. Skipped until the panel exists, since reading Instance would build it.
             internal static void RefreshIfBuilt() {
-                if (IsInitialized == false) { return; }
-                Instance.RebuildChoiceList();
+                if (IsInitialized == false || ChoicesContent == null) { return; }
+                Instance.SetChoiceList();
             }
 
             public void MakePlayerDeathSelection() {
@@ -129,7 +111,7 @@ namespace Deathlink.Death
                     Logger.LogWarning("Player not set, ensure the local player is set.");
                     return;
                 }
-                if (selectedDeathChoice == "none") {
+                if (!DeathConfigurationData.DeathLevels.ContainsKey(selectedDeathChoice)) {
                     Logger.LogWarning("No death type selected");
                     return;
                 }
@@ -141,8 +123,7 @@ namespace Deathlink.Death
                 } else {
                     DeathConfigurationData.playerSettings.Add(playerID, new DeathConfiguration() { DeathChoiceLevel = selectedDeathChoice });
                 }
-                // Replace any existing key so a changed choice overwrites the previous value.
-                Player.m_localPlayer.PlayerRemoveUniqueKey(DeathChoiceKey);
+                Player.m_localPlayer.RemoveUniqueKeyValue(DeathChoiceKey);
                 Player.m_localPlayer.AddUniqueKeyValue(DeathChoiceKey, selectedDeathChoice);
                 if (isChangeMode) {
                     DeathConfigurationData.IncrementPlayerChangesUsed(Player.m_localPlayer);
@@ -152,69 +133,46 @@ namespace Deathlink.Death
                 Hide();
             }
 
-            // TODO make this configurable and loaded from a config file
             private void SetChoiceList()
             {
-                // Destroy any rows from a previous build before repopulating. Clearing only the
-                // tracking list (below) used to leave the old toggle GameObjects parented under the
-                // content, so a rebuild stacked duplicate toggles into the shared ToggleGroup and the
-                // saved choice could come from a different toggle than the one shown selected.
+                // Destroyed, not just forgotten: old rows left under the content stay in the shared ToggleGroup.
                 foreach (Transform child in ChoicesContent.transform) {
                     GameObject.Destroy(child.gameObject);
                 }
-                difficultyToggles.Clear();
+                selectedDeathChoice = "none";
                 int y_value = -75;
-                //Logger.LogDebug($"Setting up {DeathChoices.Count} death styles.");
                 foreach (var entry in DeathConfigurationData.DeathLevels) {
                     var newDeathChoice = GameObject.Instantiate(ChoicesContainer, ChoicesContent.transform);
-                    //Logger.LogDebug("Created container");
                     var selector = newDeathChoice.transform.Find("selecter");
-                    //Logger.LogDebug($"Finding selector... null? {selector == null}");
                     selector.Find("Label").GetComponent<Text>().text = entry.Key;
-                    //Logger.LogDebug("Set label text");
                     newDeathChoice.transform.Find("ChoiceName").GetComponent<Text>().text = entry.Value.DisplayName;
-                    //Logger.LogDebug("Set display name");
                     var toggle = selector.GetComponent<Toggle>();
                     toggle.group = choiceGroup;
                     toggle.onValueChanged.AddListener((isOn) => {
-                        // Only react to the toggle being switched ON. The group also fires this
-                        // callback with isOn=false on the previously-selected toggle when it is
-                        // switched off, which would otherwise overwrite the descriptions/selection.
+                        // The group also fires this with isOn=false on the toggle it switches off.
                         if (!isOn) { return; }
-                        //Logger.LogDebug("Setting up onclock");
                         DeathPenaltyDescription.text = entry.Value.GetDeathStyleDescription();
-                        //Logger.LogDebug("Set death description");
-                        CombatModifiersDescription.GetComponent<Text>().text = entry.Value.GetDamageModifierDescription();
-                        //Logger.LogDebug("Set combat mod");
-                        XPModifiersDescription.GetComponent<Text>().text = entry.Value.GetSkillModiferDescription();
-                        //Logger.LogDebug("Set xp mod");
-                        LootModifersDescription.GetComponent<Text>().text = entry.Value.GetLootModifiersDescription();
-                        //Logger.LogDebug("Set loot mod");
-                        HarvestModifiersDescription.GetComponent<Text>().text = entry.Value.GetResourceModiferDescription();
-                        //Logger.LogDebug("Set harvest mod");
+                        CombatModifiersDescription.text = entry.Value.GetDamageModifierDescription();
+                        XPModifiersDescription.text = entry.Value.GetSkillModiferDescription();
+                        LootModifersDescription.text = entry.Value.GetLootModifiersDescription();
+                        HarvestModifiersDescription.text = entry.Value.GetResourceModiferDescription();
                         selectedDeathChoice = entry.Key;
                     });
-                    //Logger.LogDebug("Created onclick");
                     newDeathChoice.SetActive(true);
                     newDeathChoice.transform.localPosition = new Vector3() { x = 5, y = y_value };
-                    difficultyToggles.Add(toggle);
                     y_value -= 50;
                 }
             }
 
             private void CreateStaticUIObjects()
             {
-                // Idempotent: never build a second panel/ToggleGroup over the shared static state.
-                // Unity's fake-null makes this correctly rebuild after a real teardown (e.g. world
-                // reload destroys the panel, so DeathChoicePanel == null again) while blocking a
-                // duplicate build during a live session.
+                // Unity's fake null lets this rebuild after a world reload destroys the panel, but never builds a second one.
                 if (DeathChoicePanel != null) { return; }
-                if (GUIManager.Instance == null || !GUIManager.CustomGUIFront) {
+                if (!GUIManager.CustomGUIFront) {
                     Logger.LogWarning("GUIManager not setup, skipping static object creation.");
                     return;
                 }
                 Logger.LogDebug("Creating static UI");
-                // Create the panel object
                 DeathChoicePanel = GUIManager.Instance.CreateWoodpanel(
                     parent: GUIManager.CustomGUIFront.transform,
                     anchorMin: new Vector2(0.5f, 0.5f),
@@ -223,7 +181,6 @@ namespace Deathlink.Death
                     width: 800,
                     height: 960,
                     draggable: true);
-                // Hide it right away
                 DeathChoicePanel.SetActive(false);
 
                 var textHeader = GUIManager.Instance.CreateText(
@@ -261,7 +218,7 @@ namespace Deathlink.Death
                 descgotext.resizeTextMaxSize = 20;
                 descgotext.alignment = TextAnchor.MiddleCenter;
 
-                manualCloseButton = GUIManager.Instance.CreateButton(
+                GameObject closeButton = GUIManager.Instance.CreateButton(
                     text: Localization.instance.Localize("$close"),
                     parent: DeathChoicePanel.transform,
                     anchorMin: new Vector2(0.5f, 0.5f),
@@ -269,27 +226,12 @@ namespace Deathlink.Death
                     position: new Vector2(360f, 430f),
                     width: 60f,
                     height: 60f);
-                Button bclose = manualCloseButton.GetComponent<Button>();
+                Button bclose = closeButton.GetComponent<Button>();
                 bclose.interactable = true;
                 bclose.onClick.AddListener(Hide);
-                manualCloseButton.SetActive(true);
+                closeButton.SetActive(true);
 
-                var deathpenaltyTitle = GUIManager.Instance.CreateText(
-                    text: Localization.instance.Localize("$death_penalty_header"),
-                    parent: DeathChoicePanel.transform,
-                    anchorMin: new Vector2(0.5f, 0.5f),
-                    anchorMax: new Vector2(0.5f, 0.5f),
-                    position: new Vector2(100f, 330f),
-                    font: GUIManager.Instance.AveriaSerifBold,
-                    fontSize: 22,
-                    color: GUIManager.Instance.ValheimOrange,
-                    outline: true,
-                    outlineColor: Color.black,
-                    width: 400f,
-                    height: 40f,
-                    addContentSizeFitter: false);
-                deathpenaltyTitle.name = "DeathPenaltyTitle";
-
+                CreateSectionTitle("DeathPenaltyTitle", "$death_penalty_header", 330f);
                 DeathPenaltyDescription = CreateTMPText(
                     name: "DeathPenaltyDesc",
                     text: Localization.instance.Localize("$death_penalty_description"),
@@ -299,147 +241,19 @@ namespace Deathlink.Death
                     width: 490f,
                     height: 160f);
 
-                var combatTitle = GUIManager.Instance.CreateText(
-                    text: Localization.instance.Localize("$combat_header"),
-                    parent: DeathChoicePanel.transform,
-                    anchorMin: new Vector2(0.5f, 0.5f),
-                    anchorMax: new Vector2(0.5f, 0.5f),
-                    position: new Vector2(100f, 150f),
-                    font: GUIManager.Instance.AveriaSerifBold,
-                    fontSize: 22,
-                    color: GUIManager.Instance.ValheimOrange,
-                    outline: true,
-                    outlineColor: Color.black,
-                    width: 400f,
-                    height: 40f,
-                    addContentSizeFitter: false);
-                combatTitle.name = "combatModifiersTitle";
+                CreateSectionTitle("combatModifiersTitle", "$combat_header", 150f);
+                CombatModifiersDescription = CreateSectionText("combatModifiersDesc", "$combat_modifier_description", 80f, 100f);
 
-                var combatMod = GUIManager.Instance.CreateText(
-                    text: Localization.instance.Localize("$combat_modifier_description"),
-                    parent: DeathChoicePanel.transform,
-                    anchorMin: new Vector2(0.5f, 0.5f),
-                    anchorMax: new Vector2(0.5f, 0.5f),
-                    position: new Vector2(150f, 80f),
-                    font: GUIManager.Instance.AveriaSerifBold,
-                    fontSize: 16,
-                    color: Color.white,
-                    outline: true,
-                    outlineColor: Color.black,
-                    width: 500f,
-                    height: 100f,
-                    addContentSizeFitter: false);
-                combatMod.name = "combatModifiersDesc";
-                CombatModifiersDescription = combatMod.GetComponent<Text>();
-                CombatModifiersDescription.resizeTextForBestFit = true;
-                CombatModifiersDescription.resizeTextMaxSize = 18;
+                CreateSectionTitle("xpModifiersTitle", "$xp_header", 30f);
+                XPModifiersDescription = CreateSectionText("xpModifiersDesc", "$xp_mod_description", -80f, 200f);
 
-                var xpTitle = GUIManager.Instance.CreateText(
-                    text: Localization.instance.Localize("$xp_header"),
-                    parent: DeathChoicePanel.transform,
-                    anchorMin: new Vector2(0.5f, 0.5f),
-                    anchorMax: new Vector2(0.5f, 0.5f),
-                    position: new Vector2(100f, 30f),
-                    font: GUIManager.Instance.AveriaSerifBold,
-                    fontSize: 22,
-                    color: GUIManager.Instance.ValheimOrange,
-                    outline: true,
-                    outlineColor: Color.black,
-                    width: 400f,
-                    height: 40f,
-                    addContentSizeFitter: false);
-                xpTitle.name = "xpModifiersTitle";
+                CreateSectionTitle("lootModifiersTitle", "$loot_header", -130f);
+                LootModifersDescription = CreateSectionText("lootModifersDesc", "$loot_modifier_description", -240f, 200f);
 
-                var xpMod = GUIManager.Instance.CreateText(
-                    text: Localization.instance.Localize("$xp_mod_description"),
-                    parent: DeathChoicePanel.transform,
-                    anchorMin: new Vector2(0.5f, 0.5f),
-                    anchorMax: new Vector2(0.5f, 0.5f),
-                    position: new Vector2(150f, -80f),
-                    font: GUIManager.Instance.AveriaSerifBold,
-                    fontSize: 16,
-                    color: Color.white,
-                    outline: true,
-                    outlineColor: Color.black,
-                    width: 500f,
-                    height: 200f,
-                    addContentSizeFitter: false);
-                xpMod.name = "xpModifiersDesc";
-                XPModifiersDescription = xpMod.GetComponent<Text>();
-                XPModifiersDescription.resizeTextForBestFit = true;
-                XPModifiersDescription.resizeTextMaxSize = 18;
+                CreateSectionTitle("harvestModifiersTitle", "$harvest_header", -260f);
+                HarvestModifiersDescription = CreateSectionText("harvestModifersDesc", "$harvest_modifier_description", -370f, 200f);
 
-                var lootTitle = GUIManager.Instance.CreateText(
-                    text: Localization.instance.Localize("$loot_header"),
-                    parent: DeathChoicePanel.transform,
-                    anchorMin: new Vector2(0.5f, 0.5f),
-                    anchorMax: new Vector2(0.5f, 0.5f),
-                    position: new Vector2(100f, -130f),
-                    font: GUIManager.Instance.AveriaSerifBold,
-                    fontSize: 22,
-                    color: GUIManager.Instance.ValheimOrange,
-                    outline: true,
-                    outlineColor: Color.black,
-                    width: 400f,
-                    height: 40f,
-                    addContentSizeFitter: false);
-                lootTitle.name = "lootModifiersTitle";
-
-                var lootDesc = GUIManager.Instance.CreateText(
-                    text: Localization.instance.Localize("$loot_modifier_description"),
-                    parent: DeathChoicePanel.transform,
-                    anchorMin: new Vector2(0.5f, 0.5f),
-                    anchorMax: new Vector2(0.5f, 0.5f),
-                    position: new Vector2(150f, -240f),
-                    font: GUIManager.Instance.AveriaSerifBold,
-                    fontSize: 16,
-                    color: Color.white,
-                    outline: true,
-                    outlineColor: Color.black,
-                    width: 500f,
-                    height: 200f,
-                    addContentSizeFitter: false);
-                lootDesc.name = "lootModifersDesc";
-                LootModifersDescription = lootDesc.GetComponent<Text>();
-                LootModifersDescription.resizeTextForBestFit = true;
-                LootModifersDescription.resizeTextMaxSize = 18;
-
-                var harvestTitle = GUIManager.Instance.CreateText(
-                    text: Localization.instance.Localize("$harvest_header"),
-                    parent: DeathChoicePanel.transform,
-                    anchorMin: new Vector2(0.5f, 0.5f),
-                    anchorMax: new Vector2(0.5f, 0.5f),
-                    position: new Vector2(100f, -260f),
-                    font: GUIManager.Instance.AveriaSerifBold,
-                    fontSize: 22,
-                    color: GUIManager.Instance.ValheimOrange,
-                    outline: true,
-                    outlineColor: Color.black,
-                    width: 400f,
-                    height: 40f,
-                    addContentSizeFitter: false);
-                harvestTitle.name = "harvestModifiersTitle";
-
-                var harvestDesc = GUIManager.Instance.CreateText(
-                    text: Localization.instance.Localize("$harvest_modifier_description"),
-                    parent: DeathChoicePanel.transform,
-                    anchorMin: new Vector2(0.5f, 0.5f),
-                    anchorMax: new Vector2(0.5f, 0.5f),
-                    position: new Vector2(150f, -370f),
-                    font: GUIManager.Instance.AveriaSerifBold,
-                    fontSize: 16,
-                    color: Color.white,
-                    outline: true,
-                    outlineColor: Color.black,
-                    width: 500f,
-                    height: 200f,
-                    addContentSizeFitter: false);
-                harvestDesc.name = "harvestModifersDesc";
-                HarvestModifiersDescription = harvestDesc.GetComponent<Text>();
-                HarvestModifiersDescription.resizeTextForBestFit = true;
-                HarvestModifiersDescription.resizeTextMaxSize = 18;
-
-                selectChoiceButton = GUIManager.Instance.CreateButton(
+                GameObject selectButton = GUIManager.Instance.CreateButton(
                     text: Localization.instance.Localize("$deathchoice_select"),
                     parent: DeathChoicePanel.transform,
                     anchorMin: new Vector2(0.5f, 0.5f),
@@ -447,26 +261,23 @@ namespace Deathlink.Death
                     position: new Vector2(-240f, -290f),
                     width: 200f,
                     height: 80f);
-                Button bchoice = selectChoiceButton.GetComponent<Button>();
-                //bchoice.interactable = true;
-                bchoice.onClick.AddListener(MakePlayerDeathSelection);
+                selectButton.GetComponent<Button>().onClick.AddListener(MakePlayerDeathSelection);
 
                 Logger.LogDebug("Setting up scroll entry");
-                // Scroll area
-                ChoicesScrollView = GUIManager.Instance.CreateScrollView(DeathChoicePanel.transform, false, true, 10f, 10f, GUIManager.Instance.ValheimScrollbarHandleColorBlock, Color.grey, 250f, 400f);
-                ChoicesScrollView.transform.localPosition = new Vector2 { x = -260, y = -30 };
-                ChoicesContent = ChoicesScrollView.GetComponentInChildren<ContentSizeFitter>().gameObject;
-                ChoicesScrollView.GetComponentInChildren<ScrollRect>().scrollSensitivity = 200;
+                GameObject scrollView = GUIManager.Instance.CreateScrollView(DeathChoicePanel.transform, false, true, 10f, 10f, GUIManager.Instance.ValheimScrollbarHandleColorBlock, Color.grey, 250f, 400f);
+                scrollView.transform.localPosition = new Vector2 { x = -260, y = -30 };
+                ChoicesContent = scrollView.GetComponentInChildren<ContentSizeFitter>().gameObject;
+                scrollView.GetComponentInChildren<ScrollRect>().scrollSensitivity = 200;
                 choiceGroup = ChoicesContent.AddComponent<ToggleGroup>();
 
                 Logger.LogDebug("Setting up death choice template entry");
 
-                ChoicesContainer = Object.Instantiate(new GameObject("DeathChoice"), DeathChoicePanel.transform);
+                ChoicesContainer = new GameObject("DeathChoice");
+                ChoicesContainer.transform.SetParent(DeathChoicePanel.transform, false);
                 RectTransform rt = ChoicesContainer.AddComponent<RectTransform>();
                 rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, 100);
                 rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, 50);
                 rt.position = new Vector3(0, 0);
-                //ChoicesContainer.transform.position = DeathChoicePanel.transform.position;
                 LayoutElement le = ChoicesContainer.AddComponent<LayoutElement>();
                 le.minHeight = 50;
                 ChoicesContainer.SetActive(false);
@@ -498,10 +309,48 @@ namespace Deathlink.Death
                 deathSettingName.name = "ChoiceName";
             }
 
-            // Stand-in for GUIManager.CreateText, which only makes legacy UI.Text, for text that has to
-            // show the item-destruction skull: that glyph only exists in Valheim's TMP fallback fonts.
-            // Mirrors CreateText's layout and the Text defaults the old version relied on (top-left,
-            // wrapped, best fit down to 10, truncated), with an outline in place of the Outline component.
+            private static void CreateSectionTitle(string name, string locKey, float y) {
+                GameObject title = GUIManager.Instance.CreateText(
+                    text: Localization.instance.Localize(locKey),
+                    parent: DeathChoicePanel.transform,
+                    anchorMin: new Vector2(0.5f, 0.5f),
+                    anchorMax: new Vector2(0.5f, 0.5f),
+                    position: new Vector2(100f, y),
+                    font: GUIManager.Instance.AveriaSerifBold,
+                    fontSize: 22,
+                    color: GUIManager.Instance.ValheimOrange,
+                    outline: true,
+                    outlineColor: Color.black,
+                    width: 400f,
+                    height: 40f,
+                    addContentSizeFitter: false);
+                title.name = name;
+            }
+
+            private static Text CreateSectionText(string name, string locKey, float y, float height) {
+                GameObject go = GUIManager.Instance.CreateText(
+                    text: Localization.instance.Localize(locKey),
+                    parent: DeathChoicePanel.transform,
+                    anchorMin: new Vector2(0.5f, 0.5f),
+                    anchorMax: new Vector2(0.5f, 0.5f),
+                    position: new Vector2(150f, y),
+                    font: GUIManager.Instance.AveriaSerifBold,
+                    fontSize: 16,
+                    color: Color.white,
+                    outline: true,
+                    outlineColor: Color.black,
+                    width: 500f,
+                    height: height,
+                    addContentSizeFitter: false);
+                go.name = name;
+                Text text = go.GetComponent<Text>();
+                text.resizeTextForBestFit = true;
+                text.resizeTextMaxSize = 18;
+                return text;
+            }
+
+            // GUIManager.CreateText only makes legacy UI.Text, and the item-destruction skull glyph only
+            // exists in Valheim's TMP fallback fonts.
             private static TextMeshProUGUI CreateTMPText(string name, string text, Transform parent, Vector2 position, float fontSize, float width, float height) {
                 GameObject go = new GameObject(name, typeof(RectTransform));
                 go.transform.SetParent(parent, false);

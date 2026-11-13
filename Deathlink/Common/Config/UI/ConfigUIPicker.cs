@@ -53,7 +53,7 @@ namespace Deathlink.Common {
             catcherButton.transition = Selectable.Transition.None;
             catcherButton.onClick.AddListener(Close);
 
-            // Held for the picker's own lifetime. Refcounted in ConfigUI, so closing this does not unblock
+            // Held for the picker's own lifetime. Jotunn counts blocks, so closing this does not unblock
             // input while the editor underneath is still open.
             overlay.AddComponent<ConfigUI.ConfigUIInputGuard>().Hold();
 
@@ -66,47 +66,63 @@ namespace Deathlink.Common {
                 GUIManager.Instance.ValheimYellow);
 
             InputField filter = ConfigUI.AddTextField(panel.transform, 16f, 52f, PanelW - 100f, "", null,
-                InputField.ContentType.Standard, "Filter...");
-            ConfigUI.AddButton(panel.transform, PanelW - 76f, 52f, 60f, "Close", Close, 28f);
+                InputField.ContentType.Standard, ConfigUI.L("$menu_filter", "Filter") + "...");
+            ConfigUI.AddButton(panel.transform, PanelW - 76f, 52f, 60f, ConfigUI.L("$menu_close", "Close"), Close, 28f);
 
             ConfigUI.CreateScroll(panel.transform, 16f, 92f, PanelW - 32f, PanelH - 116f,
                 out Transform content, out float contentW);
             if (content == null) { return; }
 
-            Action<string> rebuild = null;
-            rebuild = needle => {
-                foreach (Transform child in content) { UnityEngine.Object.Destroy(child.gameObject); }
+            // Rows are built once and relabelled on each keystroke. Building a fresh Jotunn button for every
+            // match on every keystroke hitched visibly against the full prefab table.
+            List<GameObject> rows = new List<GameObject>();
+            List<Text> labels = new List<Text>();
+            List<string> rowOptions = new List<string>();
+            GameObject statusRow = ConfigUI.NewLayoutRow(content, contentW, RowH);
+            Text status = ConfigUI.AddText(statusRow.transform, 4f, 0f, contentW, RowH, "", 14, TextAnchor.MiddleLeft);
 
-                int shown = 0;
+            Action<string> refresh = needle => {
+                int matched = 0;
                 foreach (string option in all) {
                     if (string.IsNullOrEmpty(needle) == false
                         && option.IndexOf(needle, StringComparison.OrdinalIgnoreCase) < 0) { continue; }
-                    if (shown >= MaxRows) { break; }
-                    shown++;
+                    matched++;
+                    if (matched > MaxRows) { continue; }
 
-                    string picked = option;
-                    GameObject row = ConfigUI.NewLayoutRow(content, contentW, RowH);
-                    ConfigUI.AddButton(row.transform, 0f, 0f, contentW, picked, () => {
-                        Close();
-                        onPick?.Invoke(picked);
-                    }, RowH - 2f);
+                    int index = matched - 1;
+                    if (index == rows.Count) {
+                        GameObject row = ConfigUI.NewLayoutRow(content, contentW, RowH);
+                        GameObject button = ConfigUI.AddButton(row.transform, 0f, 0f, contentW, "", () => {
+                            string picked = rowOptions[index];
+                            Close();
+                            onPick?.Invoke(picked);
+                        }, RowH - 2f);
+                        rows.Add(row);
+                        labels.Add(button.GetComponentInChildren<Text>());
+                        rowOptions.Add(null);
+                    }
+                    rowOptions[index] = option;
+                    labels[index].text = ConfigUI.L(option);
+                    rows[index].SetActive(true);
                 }
 
-                if (shown == 0) {
-                    GameObject row = ConfigUI.NewLayoutRow(content, contentW, RowH);
-                    ConfigUI.AddText(row.transform, 4f, 0f, contentW, RowH, "No matches", 14,
-                        TextAnchor.MiddleLeft);
-                } else if (shown >= MaxRows) {
-                    GameObject row = ConfigUI.NewLayoutRow(content, contentW, RowH);
-                    ConfigUI.AddText(row.transform, 4f, 0f, contentW, RowH,
-                        $"... {all.Count - shown} more, type to narrow", 13, TextAnchor.MiddleLeft);
+                int shown = Math.Min(matched, MaxRows);
+                for (int i = shown; i < rows.Count; i++) { rows[i].SetActive(false); }
+
+                statusRow.transform.SetAsLastSibling();
+                statusRow.SetActive(matched == 0 || matched > shown);
+                if (matched == 0) {
+                    status.fontSize = 14;
+                    status.text = ConfigUI.L("$modquickconfig_no_matches", "No matches");
+                } else if (matched > shown) {
+                    status.fontSize = 13;
+                    string more = ConfigUI.L("$modquickconfig_more_matches", "... $1 more, type to narrow");
+                    status.text = more.Replace("$1", (matched - shown).ToString());
                 }
             };
 
-            // Filtering on every keystroke: these lists are in-memory strings and the row cap keeps the
-            // rebuild bounded, so it stays responsive even against the full prefab table.
-            filter.onValueChanged.AddListener(needle => rebuild(needle));
-            rebuild("");
+            filter.onValueChanged.AddListener(needle => refresh(needle));
+            refresh("");
         }
 
         internal static void Close() {

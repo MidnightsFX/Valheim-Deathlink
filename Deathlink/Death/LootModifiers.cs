@@ -1,54 +1,40 @@
-﻿using HarmonyLib;
-using System;
+using HarmonyLib;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using UnityEngine;
+using static Deathlink.Common.DataObjects;
 
 namespace Deathlink.Death
 {
     public static class LootModifiers
     {
-        [HarmonyPatch(typeof(CharacterDrop))]
+        [HarmonyPatch(typeof(CharacterDrop), nameof(CharacterDrop.GenerateDropList))]
         public static class CalculateLootByModifiers
         {
-            //[HarmonyDebug]
-            [HarmonyPostfix]
-            [HarmonyPatch(nameof(CharacterDrop.GenerateDropList))]
             static void Postfix(List<KeyValuePair<GameObject, int>> __result, CharacterDrop __instance) {
                 if (!__instance.m_character.m_localPlayerHasHit) { return; }
-                if (Deathlink.pcfg().DeathLootModifiers == null || Deathlink.pcfg().DeathLootModifiers.Count == 0) { return; }
-
-                List<KeyValuePair<GameObject, int>> modified = new List<KeyValuePair<GameObject, int>>();
-
-                foreach (var kvp in __result) {
-                    float mod = Deathlink.pcfg().GetResouceEarlyCache(kvp.Key.name);
-                    if (mod == 1f) {
-                        modified.Add(kvp); 
-                    } else {
-                        int amount = Mathf.RoundToInt(kvp.Value * mod);
-                        if (amount >= 1){ modified.Add(new KeyValuePair<GameObject, int>(key: kvp.Key, value: amount)); }
-                    }
-                }
-                //Logger.LogDebug($"Checking for kill random loot.");
-                List<KeyValuePair<GameObject, int>> killloot = Deathlink.pcfg().RollKillLoot();
-                if (killloot.Count > 0) {
-                    //Logger.LogDebug($"Kill Dropping {killloot.Count} types of loot.");
-                    foreach (var kvp in killloot) {
-                        int i = 0;
-                        while(i < kvp.Value) {
-                            GameObject.Instantiate(kvp.Key, __instance.transform.position, Quaternion.identity);
-                            i++;
-                        }
-                        
-                    }
-                }
+                DeathChoiceLevel level = Deathlink.pcfg();
+                bool scales = level.HasResourceModifiers(ResourceGainTypes.Kills);
+                bool rollsLoot = level.HasLoot(ResourceGainTypes.Kills);
+                if (!scales && !rollsLoot) { return; }
 
                 // Harmony only writes __result back when it is declared 'ref'; a plain reassignment
-                // is discarded. Mutate the existing list in place so the scaled drops actually apply.
-                __result.Clear();
-                __result.AddRange(modified);
+                // is discarded, so the list is changed in place.
+                if (scales) {
+                    for (int i = __result.Count - 1; i >= 0; i--) {
+                        KeyValuePair<GameObject, int> drop = __result[i];
+                        float mod = level.GetResourceModifier(drop.Key, ResourceGainTypes.Kills);
+                        if (mod == 1f) { continue; }
+                        int amount = HarvestModifiers.ScaleCount(drop.Value, mod);
+                        if (amount > 0) {
+                            __result[i] = new KeyValuePair<GameObject, int>(drop.Key, amount);
+                        } else {
+                            __result.RemoveAt(i);
+                        }
+                    }
+                }
+                // Added to the drop list rather than spawned here, so vanilla drops it with the rest: spread out,
+                // stamped with the world level, and with the ragdoll when the creature leaves one.
+                if (rollsLoot) { __result.AddRange(level.RollLoot(ResourceGainTypes.Kills)); }
             }
         }
     }

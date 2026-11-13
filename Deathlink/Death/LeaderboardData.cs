@@ -11,29 +11,28 @@ using static Deathlink.Common.DataObjects;
 
 namespace Deathlink.Death
 {
-    /// <summary>
-    /// Server-authoritative leaderboard. Clients collect their own stats (native PlayerProfile
-    /// stats + custom accumulators stored as player unique keys) and report a snapshot to the
-    /// server; the server merges, persists to leaderboard.yaml, and broadcasts the full board back
-    /// to all clients on a slow timer. Mirrors the config-sync design in ValConfig.cs.
-    /// </summary>
     internal static class LeaderboardData
     {
-        // Server store + client cache, keyed by character/player id.
         public static Dictionary<long, LeaderboardEntry> leaderboard = new Dictionary<long, LeaderboardEntry>();
 
         private static CustomRPC leaderboardRPC;
 
-        // Damage dealt this session, accumulated cheaply in the Character.Damage hook and flushed
-        // to the persistent unique key at snapshot time (avoids touching unique keys on every hit).
+        // Added to the unique key at snapshot time rather than written on every hit.
         private static long sessionDamage = 0;
 
-        // Ensures the one-shot "report shortly after spawn" only fires once per session.
         private static bool initialReportSent = false;
 
-        // ---------------------------------------------------------------------
-        // Persistence (server)
-        // ---------------------------------------------------------------------
+        // Player.m_timeSinceDeath starts at 999999 on a character that has never died, and at that size a
+        // float cannot take a frame's worth of time, so it never moves. Such a life is timed here instead:
+        // the seconds before this session are kept on the character, the rest counted from its spawn.
+        private const float NeverDiedTime = 999999f;
+        private const string NeverDiedLifeKey = "DL_LBAlive";
+        private static float lifeClockStart = -1f;
+        // One entry is a few hundred characters; anything far past that is not a real snapshot.
+        private const int MaxSnapshotChars = 8192;
+        private static bool unsaved = false;
+        // Jotunn's CustomRPC.MaximumSendQueueSize, which is private.
+        private const int JotunnSendQueueLimit = 20000;
 
         internal static void Init()
         {
@@ -46,7 +45,7 @@ namespace Deathlink.Death
             }
         }
 
-        public static void Write()
+        private static void Write()
         {
             try {
                 File.WriteAllText(ValConfig.leaderboardPath, yamlserializer.Serialize(leaderboard));
@@ -55,43 +54,49 @@ namespace Deathlink.Death
             }
         }
 
-        public static void UpdateLeaderboardFromYaml(string rawyaml)
+        private static void UpdateLeaderboardFromYaml(string rawyaml)
         {
             if (string.IsNullOrWhiteSpace(rawyaml)) { return; }
             var parsed = leaderboardDeserializer.Deserialize<Dictionary<long, LeaderboardEntry>>(rawyaml);
             if (parsed != null) { leaderboard = parsed; }
         }
 
-        public static void MergeSnapshot(LeaderboardEntry entry)
+        private static void MergeSnapshot(LeaderboardEntry entry)
         {
             if (entry == null || entry.PlayerID == 0) { return; }
             leaderboard[entry.PlayerID] = entry;
-            Write();
+            unsaved = true;
         }
 
-        // ---------------------------------------------------------------------
-        // RPC wiring (called from ValConfig.SetupConfigRPCs)
-        // ---------------------------------------------------------------------
+        // Saved on the sync tick rather than on every snapshot, which arrive from every client each interval.
+        private static void SaveIfChanged()
+        {
+            if (!unsaved) { return; }
+            unsaved = false;
+            Write();
+        }
 
         public static void SetupRPC()
         {
             leaderboardRPC = NetworkManager.Instance.AddRPC("DEATHLK_LB", OnServerReceiveSnapshot, OnClientReceiveBoard);
-            SynchronizationManager.Instance.AddInitialSynchronization(leaderboardRPC, SendFullBoardPackage);
+            SynchronizationManager.Instance.AddInitialSynchronization(leaderboardRPC, BuildFullBoardPackage);
         }
 
-        // Server side: a client reported its single-entry snapshot.
         private static IEnumerator OnServerReceiveSnapshot(long sender, ZPackage package)
         {
             try {
                 bool wantsBoard = package.ReadBool();
                 string yaml = package.ReadString();
+                if (yaml.Length > MaxSnapshotChars) {
+                    Logger.LogWarning($"Ignoring an oversized leaderboard snapshot ({yaml.Length} characters) from {sender}.");
+                    yield break;
+                }
                 var entry = leaderboardDeserializer.Deserialize<LeaderboardEntry>(yaml);
                 MergeSnapshot(entry);
-                // Reply to just this client when it asked (a dashboard opened and pulled the board);
-                // routine periodic reports don't, so we don't spam the whole server on every tick.
-                // Passive distribution to all players still happens on the SyncLoop broadcast.
+                // Only a client opening the dashboard asks for the board, and only that client gets it
+                // back; everyone else gets it from the SyncLoop broadcast.
                 if (wantsBoard && leaderboardRPC != null) {
-                    leaderboardRPC.SendPackage(sender, SendFullBoardPackage());
+                    leaderboardRPC.SendPackage(sender, BuildFullBoardPackage());
                 }
             } catch (Exception e) {
                 Logger.LogWarning($"Failed to parse leaderboard snapshot from {sender}. Exception: {e}");
@@ -99,7 +104,6 @@ namespace Deathlink.Death
             yield return null;
         }
 
-        // Client side: the server pushed the full board (periodic broadcast or initial sync).
         private static IEnumerator OnClientReceiveBoard(long sender, ZPackage package)
         {
             string yaml = package.ReadString();
@@ -112,26 +116,31 @@ namespace Deathlink.Death
             yield return null;
         }
 
-        private static ZPackage SendFullBoardPackage()
+        private static ZPackage BuildFullBoardPackage()
         {
             ZPackage pkg = new ZPackage();
             pkg.Write(yamlserializer.Serialize(leaderboard));
             return pkg;
         }
 
-        public static void BroadcastFullBoard()
+        private static ZPackage BuildSnapshotPackage(LeaderboardEntry snap, bool requestBoard)
         {
-            if (ZNet.instance == null || leaderboardRPC == null) { return; }
-            leaderboardRPC.SendPackage(ZNet.instance.m_peers, SendFullBoardPackage());
+            ZPackage pkg = new ZPackage();
+            pkg.Write(requestBoard);
+            pkg.Write(yamlserializer.Serialize(snap));
+            return pkg;
         }
 
-        // requestBoard is set when a client opens the dashboard: it asks the server to reply with the
-        // current board to just this client (an on-demand pull), on top of merging the pushed snapshot.
-        public static void SendLocalSnapshotToServer(bool requestBoard = false)
+        private static void BroadcastFullBoard()
+        {
+            if (ZNet.instance == null || leaderboardRPC == null) { return; }
+            leaderboardRPC.SendPackage(ZNet.instance.m_peers, BuildFullBoardPackage());
+        }
+
+        private static void SendLocalSnapshotToServer(bool requestBoard = false)
         {
             LeaderboardEntry snap = BuildLocalSnapshot();
             if (snap == null) { return; }
-            // On a listen-server host we are the server: merge directly instead of sending to ourselves.
             if (ZNet.instance != null && ZNet.instance.IsServer()) {
                 MergeSnapshot(snap);
                 // The host reads the authoritative board directly, so a pull is just a local refresh.
@@ -139,15 +148,9 @@ namespace Deathlink.Death
                 return;
             }
             if (leaderboardRPC == null || ZRoutedRpc.instance == null) { return; }
-            ZPackage pkg = new ZPackage();
-            pkg.Write(requestBoard);
-            pkg.Write(yamlserializer.Serialize(snap));
-            leaderboardRPC.SendPackage(ZRoutedRpc.instance.GetServerPeerID(), pkg);
+            leaderboardRPC.SendPackage(ZRoutedRpc.instance.GetServerPeerID(), BuildSnapshotPackage(snap, requestBoard));
         }
 
-        // Called when a client opens the leaderboard dashboard: push our latest stats and pull the
-        // current board so recent accomplishments are reflected immediately. The server replies to
-        // just this client; passive distribution to everyone else still rides the background SyncLoop.
         public static void RequestDashboardSync()
         {
             if (!ValConfig.EnableLeaderboard.Value || ZNet.instance == null) { return; }
@@ -158,48 +161,37 @@ namespace Deathlink.Death
             }
         }
 
-        // Push a final snapshot to the server as part of the disconnect/shutdown sequence.
-        // This cannot use SendLocalSnapshotToServer: Jotunn's SendPackage runs as a coroutine hosted
-        // on ZNet.instance, and during shutdown that coroutine never gets another frame before ZNet
-        // tears the connection down, so the packet would never actually be transmitted. Instead we
-        // drive the send routine synchronously here, while the server socket is still open, so
-        // InvokeRoutedRPC queues the packet before ZNet.Shutdown disposes the peers.
-        public static void FlushLocalSnapshotToServer()
+        // Jotunn's SendPackage is a coroutine on ZNet.instance that gets no further frame during shutdown,
+        // so the send routine is driven synchronously here while the server socket is still open.
+        private static void FlushLocalSnapshotToServer()
         {
             if (ZNet.instance == null) { return; }
 
-            // On a listen-server host (and, defensively, a dedicated server with no local player)
-            // there is no remote server to push to; merge our own snapshot directly if we have one.
             if (ZNet.instance.IsServer()) {
-                if (Player.m_localPlayer != null) {
-                    LeaderboardEntry hostSnap = BuildLocalSnapshot();
-                    if (hostSnap != null) { MergeSnapshot(hostSnap); }
-                }
+                LeaderboardEntry hostSnap = BuildLocalSnapshot();
+                if (hostSnap != null) { MergeSnapshot(hostSnap); }
                 return;
             }
 
             if (Player.m_localPlayer == null || leaderboardRPC == null) { return; }
             ZNetPeer serverPeer = ZNet.instance.GetServerPeer();
-            if (serverPeer == null) { return; }
+            if (serverPeer == null || serverPeer.m_socket == null) { return; }
+            // Jotunn waits for a full send queue to drain with a Time.time timeout, and Time.time does not
+            // move inside this synchronous loop, so a backed-up connection would hang the game on logout.
+            if (serverPeer.m_socket.GetSendQueueSize() > JotunnSendQueueLimit) {
+                Logger.LogDebug("Send queue to the server is full, skipping the final leaderboard report.");
+                return;
+            }
 
             LeaderboardEntry snap = BuildLocalSnapshot();
             if (snap == null) { return; }
 
-            ZPackage pkg = new ZPackage();
-            pkg.Write(false); // disconnecting: no board reply needed (matches OnServerReceiveSnapshot's read order)
-            pkg.Write(yamlserializer.Serialize(snap));
-
-            // A small, uncompressed package completes the send routine in a single synchronous pass,
-            // performing the underlying InvokeRoutedRPC before we return.
-            IEnumerator routine = leaderboardRPC.SendPackageRoutine(new List<ZNetPeer> { serverPeer }, pkg);
-            while (routine.MoveNext()) { }
+            // A small, uncompressed package finishes the routine, including its InvokeRoutedRPC, in one pass.
+            IEnumerator routine = leaderboardRPC.SendPackageRoutine(new List<ZNetPeer> { serverPeer }, BuildSnapshotPackage(snap, false));
+            for (int step = 0; step < 1000 && routine.MoveNext(); step++) { }
         }
 
-        // ---------------------------------------------------------------------
-        // Snapshot building (client)
-        // ---------------------------------------------------------------------
-
-        public static LeaderboardEntry BuildLocalSnapshot()
+        private static LeaderboardEntry BuildLocalSnapshot()
         {
             Player player = Player.m_localPlayer;
             if (player == null) { return null; }
@@ -212,7 +204,7 @@ namespace Deathlink.Death
             if (rawStats == null) { return null; }
             var stats = rawStats.m_stats;
 
-            // Flush this session's accumulated damage into the persistent unique key.
+            StoreNeverDiedLife(player);
             long persistedDamage = GetLongKey(player, LeaderboardDamageKey);
             if (sessionDamage > 0) {
                 persistedDamage += sessionDamage;
@@ -236,21 +228,17 @@ namespace Deathlink.Death
             };
         }
 
-        // ---------------------------------------------------------------------
-        // Periodic sync loop (started from Deathlink.Awake; runs on client and server)
-        // ---------------------------------------------------------------------
-
         public static IEnumerator SyncLoop()
         {
-            // Let the game/world finish loading before the first tick.
+            // Let the world finish loading before the first tick.
             yield return new WaitForSeconds(60f);
             while (true) {
                 float intervalSeconds = Mathf.Max(60f, ValConfig.LeaderboardSyncInterval.Value * 60f);
                 if (ValConfig.EnableLeaderboard.Value && ZNet.instance != null) {
                     try {
                         if (ZNet.instance.IsServer()) {
-                            // A listen-server host is also a player: report its own stats first.
                             if (Player.m_localPlayer != null) { SendLocalSnapshotToServer(); }
+                            SaveIfChanged();
                             BroadcastFullBoard();
                         } else if (Player.m_localPlayer != null) {
                             SendLocalSnapshotToServer();
@@ -263,11 +251,6 @@ namespace Deathlink.Death
             }
         }
 
-        // ---------------------------------------------------------------------
-        // Tracking hooks
-        // ---------------------------------------------------------------------
-
-        // Survival: record the just-ended life's played time (m_timeSinceDeath) at death.
         [HarmonyPatch(typeof(Player), nameof(Player.OnDeath))]
         public static class Leaderboard_OnDeath_Patch
         {
@@ -277,7 +260,13 @@ namespace Deathlink.Death
                 if (!ValConfig.EnableLeaderboard.Value) { return; }
                 if (__instance == null || __instance != Player.m_localPlayer) { return; }
 
-                long life = (long)Mathf.Max(0f, __instance.m_timeSinceDeath);
+                long life;
+                if (NeverDied(__instance)) {
+                    life = NeverDiedLifeSeconds(__instance);
+                    __instance.RemoveUniqueKeyValue(NeverDiedLifeKey);
+                } else {
+                    life = (long)Mathf.Max(0f, __instance.m_timeSinceDeath);
+                }
                 long deaths = GetLongKey(__instance, LeaderboardDeathCountKey);
                 long total = GetLongKey(__instance, LeaderboardTotalLifeKey);
                 long longest = GetLongKey(__instance, LeaderboardLongestLifeKey);
@@ -289,10 +278,8 @@ namespace Deathlink.Death
             }
         }
 
-        // Combat: accumulate damage the local player deals to non-player characters.
-        // Character.Damage runs on the machine owning the target; after a hit, ownership of the
-        // target typically transfers to the attacker, so this captures the common case. In some
-        // multiplayer situations the value is approximate, which is acceptable for a leaderboard.
+        // Character.Damage runs on the attacker's machine (it then sends RPC_Damage to the target's
+        // owner), so this sees every hit the local player lands. It counts damage before resistances.
         [HarmonyPatch(typeof(Character), nameof(Character.Damage))]
         public static class Leaderboard_Damage_Patch
         {
@@ -309,16 +296,16 @@ namespace Deathlink.Death
             }
         }
 
-        // Report once shortly after the local player spawns so existing persisted stats reach the
-        // server promptly (the periodic loop then keeps it in sync on the slow interval).
+        // So saved stats reach the server without waiting for the slow sync tick.
         [HarmonyPatch(typeof(Player), nameof(Player.OnSpawned))]
         public static class Leaderboard_OnSpawned_Patch
         {
             [HarmonyPostfix]
             public static void Postfix(Player __instance)
             {
-                if (!ValConfig.EnableLeaderboard.Value) { return; }
-                if (__instance != Player.m_localPlayer || initialReportSent) { return; }
+                if (!ValConfig.EnableLeaderboard.Value || __instance != Player.m_localPlayer) { return; }
+                lifeClockStart = Time.time;
+                if (initialReportSent) { return; }
                 initialReportSent = true;
                 try {
                     SendLocalSnapshotToServer();
@@ -328,10 +315,8 @@ namespace Deathlink.Death
             }
         }
 
-        // Flush a final snapshot to the server when the player disconnects, so a session that ended
-        // before the slow SyncLoop tick (or an entire short session) is not lost. Game.Shutdown is the
-        // shared choke point for both "log out to main menu" and "quit to desktop", and it runs before
-        // ZNet tears down the connection, so the server socket is still open to send over.
+        // Game.Shutdown runs for both logout and quit, before ZNet closes the connection, so a session
+        // shorter than the sync interval still reaches the server.
         [HarmonyPatch(typeof(Game), "Shutdown")]
         public static class Leaderboard_Shutdown_Patch
         {
@@ -340,22 +325,44 @@ namespace Deathlink.Death
             {
                 if (ValConfig.EnableLeaderboard.Value) {
                     try {
+                        // Before the character is saved, which Game.Shutdown does next.
+                        StoreNeverDiedLife(Player.m_localPlayer);
                         FlushLocalSnapshotToServer();
                     } catch (Exception e) {
                         Logger.LogWarning($"Leaderboard disconnect flush failed: {e}");
                     }
                 }
-                // Let the one-shot spawn report fire again if the player reconnects (to a dedicated
-                // server, say) without restarting the game; these statics otherwise persist for the
-                // whole process and would leave a reconnected player's board stale until the next tick.
+                // These statics outlive the session, so a reconnect without restarting the game would
+                // otherwise skip the spawn report.
                 initialReportSent = false;
                 sessionDamage = 0;
+                lifeClockStart = -1f;
+                if (ZNet.instance != null && ZNet.instance.IsServer()) { SaveIfChanged(); }
+                // A client holds the last server's board in memory. Without this, hosting a world next
+                // would merge that board into this machine's own file.
+                leaderboard = new Dictionary<long, LeaderboardEntry>();
+                Init();
             }
         }
 
-        // ---------------------------------------------------------------------
-        // Unique-key helpers (numeric values persisted as strings, like DeathChoiceChangesKey)
-        // ---------------------------------------------------------------------
+        private static bool NeverDied(Player player)
+        {
+            return player.m_timeSinceDeath >= NeverDiedTime;
+        }
+
+        private static long NeverDiedLifeSeconds(Player player)
+        {
+            long session = lifeClockStart >= 0f ? (long)(Time.time - lifeClockStart) : 0L;
+            return GetLongKey(player, NeverDiedLifeKey) + session;
+        }
+
+        // Moves this session's count onto the character, so it is saved with it.
+        private static void StoreNeverDiedLife(Player player)
+        {
+            if (player == null || lifeClockStart < 0f || !NeverDied(player)) { return; }
+            SetLongKey(player, NeverDiedLifeKey, NeverDiedLifeSeconds(player));
+            lifeClockStart = Time.time;
+        }
 
         private static long GetLongKey(Player player, string key)
         {
@@ -367,7 +374,6 @@ namespace Deathlink.Death
 
         private static void SetLongKey(Player player, string key, long value)
         {
-            player.PlayerRemoveUniqueKey(key);
             player.AddUniqueKeyValue(key, value.ToString());
         }
     }

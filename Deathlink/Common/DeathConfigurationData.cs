@@ -1,8 +1,7 @@
 using HarmonyLib;
 using Jotunn.Managers;
-using System;
+using System.Collections;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using UnityEngine;
 using static Deathlink.Common.DataObjects;
@@ -16,7 +15,6 @@ namespace Deathlink.Common
             {
                 "Vanilla", new DeathChoiceLevel() {
                     DisplayName = "Vanilla",
-                    // Where a player lands when the level they had stored no longer exists.
                     Fallback = true,
                     DeathStyle = new DeathProgressionDetails() { itemLossStyle = ItemLossStyle.None, foodLossOnDeath = true, itemSavedStyle = ItemSavedStyle.Tombstone, minSkillLossPercentage = 0.05f, maxSkillLossPercentage = 0.05f },
                     DeathLootModifiers = new Dictionary<string, DeathLootModifier>() { },
@@ -111,16 +109,6 @@ namespace Deathlink.Common
         }
         };
 
-        // Loading, watching, validating and syncing both yaml files is handled by Common/Config; the
-        // registrations live in DeathlinkConfigFiles.cs. What is left here is what to DO with the values.
-
-        /// <summary>
-        /// The level a player falls back to when the one they had stored is gone: the configured
-        /// DefaultDeathChoice if it resolves, otherwise the level marked Fallback, otherwise the first in
-        /// the file. Centralised so file ORDER stops being load-bearing -- previously every fallback path
-        /// took DeathLevels.First(), so simply reordering DeathChoices.yaml changed where orphaned
-        /// players landed.
-        /// </summary>
         public static string ResolveFallbackKey() {
             if (DeathLevels == null || DeathLevels.Count == 0) { return null; }
 
@@ -145,23 +133,18 @@ namespace Deathlink.Common
             [HarmonyPostfix]
             [HarmonyPatch(nameof(Player.Load))]
             static void Postfix(Player __instance) {
+                // The main menu's character preview loads a Player too.
+                if (__instance != Player.m_localPlayer) { return; }
                 CheckAndSetPlayerDeathConfig(__instance);
             }
         }
 
-        // Armed at startup and re-armed whenever the levels or the prefab table are replaced.
         private static bool prefabValidationPending = true;
 
-        /// <summary>
-        /// The deferred half of DeathChoices.yaml validation. Prefab names cannot be resolved during
-        /// Awake -- ZNetScene does not exist yet -- so the startup pass deliberately skips them and this
-        /// runs the check the first time the levels are actually used: when a player loads their
-        /// character or picks a Deathlink choice. Cheap to call repeatedly; it does nothing once the
-        /// check has run, and nothing yet if the prefab table still is not up.
-        /// </summary>
+        // Prefab names cannot be resolved during Awake, before ZNetScene exists, so the startup
+        // validation skips them and this runs that check the first time the levels are used.
         internal static void EnsurePrefabsValidated() {
             if (prefabValidationPending == false) { return; }
-            // Not ready yet. Stays armed, so the next player load or choice retries it.
             if (Utils.PrefabsAvailable() == false) { return; }
 
             // Cleared before the pass, not after, so a re-entrant call cannot start a second one.
@@ -169,57 +152,43 @@ namespace Deathlink.Common
             YamlConfigManager.RevalidatePrefabDependent();
         }
 
-        /// <summary>
-        /// Re-arms the deferred prefab check unconditionally. For a new ZNetScene: the prefab table it
-        /// brings is a different one, so whatever was checked against the last table has to be redone.
-        /// </summary>
         internal static void ArmPrefabValidation() {
             prefabValidationPending = true;
         }
 
-        /// <summary>
-        /// Re-arms the deferred check only when the load that just happened could not check prefab names
-        /// for itself -- the startup load, or the server's copy arriving during connect, both of which
-        /// run before ZNetScene exists.
-        ///
-        /// An in-world reload (hand edit, broadcast, in-game edit) validated prefab names for real inside
-        /// LoadFrom and has already logged the result, so arming there would only make the next player
-        /// load repeat the same report.
-        /// </summary>
+        // A load made once prefabs exist has already checked their names and logged the result, so
+        // only a load made before ZNetScene exists needs the deferred pass.
         internal static void ArmPrefabValidationIfUnchecked() {
             if (Utils.PrefabsAvailable()) { return; }
             prefabValidationPending = true;
         }
 
         public static void CheckAndSetPlayerDeathConfig(Player player) {
-            // The lazy prefab pass. This method is the one point every way of arriving at a resolved
-            // death choice funnels through -- the Player.Load postfix, the selection popup, an admin
-            // reset and the config apply hook -- so hanging the check here covers all of them once.
+            // Every way of arriving at a resolved choice comes through here, so the deferred check runs here.
             EnsurePrefabsValidated();
 
             if (ValConfig.UsePrivateKeysForDeathChoice.Value) {
                 Logger.LogDebug($"Checking private keys configurations for Deathlink");
-                if (!player.PlayerHasUniqueKey(DeathChoiceKey)) {
+                if (!player.TryGetUniqueKeyValue(DeathChoiceKey, out _)) {
                     string defaultChoice = GetValidDefaultChoiceKey();
                     if (defaultChoice != null) {
                         Logger.LogInfo($"No stored Deathlink choice, assigning configured default '{defaultChoice}'.");
                         player.AddUniqueKeyValue(DeathChoiceKey, defaultChoice);
                     }
                 }
-                if (player.PlayerHasUniqueKey(DeathChoiceKey)) {
+                if (!player.TryGetUniqueKeyValue(DeathChoiceKey, out _)) {
+                    // Not chosen yet. Without this the level of whichever character was loaded before stays in force.
+                    playerDeathConfiguration = ResolveFallbackLevel();
+                } else {
                     player.TryGetUniqueKeyValue(DeathChoiceKey, out string selectedDeathConfig);
                     if (DeathLevels.ContainsKey(selectedDeathConfig)) {
                         Logger.LogDebug($"Player deathlink configurations set {selectedDeathConfig}");
                         playerDeathConfiguration = DeathLevels[selectedDeathConfig];
                     } else {
-                        // Info, not debug: this is what an admin sees after renaming or deleting a level,
-                        // and it is the only signal that a player was moved off it.
+                        // Info, not debug: it is an admin's only sign that a player was moved off a removed level.
                         Logger.LogInfo($"Stored death choice '{selectedDeathConfig}' is no longer configured; clearing it for this player.");
-                        player.PlayerRemoveUniqueKey(DeathChoiceKey);
+                        player.RemoveUniqueKeyValue(DeathChoiceKey);
 
-                        // Resolved straight through rather than by re-entering this method. The recursion
-                        // terminated only because the key had just been removed, which is a fragile thing
-                        // to depend on.
                         string replacement = GetValidDefaultChoiceKey();
                         if (replacement != null) {
                             Logger.LogInfo($"Assigning configured default '{replacement}' instead.");
@@ -236,18 +205,11 @@ namespace Deathlink.Common
             } else {
                 CheckYamlConfig();
             }
-            // Push the resolved damage multipliers onto the player's networked ZDO so every
-            // client can read them when applying combat damage (see DamageModifiers).
             StoreDamageModifiersOnPlayer(player);
         }
 
-        /// <summary>
-        /// Persists the local player's damage take/deal multipliers onto their character ZDO.
-        /// The player owns their own ZDO, so this replicates to every other client and lets the
-        /// machine that owns a hit's target look up the correct multiplier for both the attacker
-        /// and the target. Always written (even when 1f) so switching to a choice without a
-        /// modifier overwrites any stale value from a previous choice.
-        /// </summary>
+        // On the player's own ZDO so whichever machine processes a hit can read both sides' multipliers.
+        // Always written, even at 1, so a previous choice's value does not linger.
         public static void StoreDamageModifiersOnPlayer(Player player) {
             if (player == null) { return; }
             ZNetView nview = player.m_nview;
@@ -259,25 +221,17 @@ namespace Deathlink.Common
             Logger.LogDebug($"Stored damage modifiers on player ZDO: taken {playerDeathConfiguration.DamageTakenModifier}, done {playerDeathConfiguration.DamageDoneModifier}");
         }
 
-        /// <summary>
-        /// Clears the local player's stored death choice (and change counter) and re-applies the
-        /// resolved configuration immediately so an admin reset takes effect without a relog. Reverts
-        /// the in-memory config to a clean baseline first so a reset with no configured default falls
-        /// back to Vanilla instead of leaving the previous choice's penalties/damage modifiers active.
-        /// When no default is configured the player is left without a choice key, so the selection
-        /// popup re-appears on the next inventory open.
-        /// </summary>
+        // Takes effect without a relog. With no configured default the player is left without a choice,
+        // so the selection popup comes back.
         public static void ResetLocalPlayerChoice() {
             Player player = Player.m_localPlayer;
             if (player == null) {
                 Logger.LogWarning("Cannot reset death choice, local player is not set.");
                 return;
             }
-            player.PlayerRemoveUniqueKey(DeathChoiceKey);
-            player.PlayerRemoveUniqueKey(DeathChoiceChangesKey);
-            // Drop the previous choice so CheckAndSetPlayerDeathConfig can't re-store stale modifiers.
-            playerDeathConfiguration = ResolveFallbackLevel();
-            // Reapplies any configured default and rewrites the networked damage modifiers.
+            player.RemoveUniqueKeyValue(DeathChoiceKey);
+            player.RemoveUniqueKeyValue(DeathChoiceChangesKey);
+            playerSettings.Remove(player.GetPlayerID());
             CheckAndSetPlayerDeathConfig(player);
             WritePlayerChoices();
             Logger.LogInfo("Local player's death choice has been reset.");
@@ -309,21 +263,94 @@ namespace Deathlink.Common
                     playerSettings.Add(playerID, new DeathConfiguration() { DeathChoiceLevel = defaultChoice });
                     playerDeathConfiguration = DeathLevels[defaultChoice];
                     WritePlayerChoices();
+                } else {
+                    playerDeathConfiguration = ResolveFallbackLevel();
                 }
             }
         }
 
-        // Goes through the config manager rather than File.WriteAllText so the documented header block at
-        // the top of CharacterSettings.yaml survives the write.
+        // Yaml mode only: private keys travel with the character. The server owns CharacterSettings.yaml,
+        // so a client reports its own entry instead of writing the file.
         public static void WritePlayerChoices()
         {
+            if (ValConfig.UsePrivateKeysForDeathChoice.Value) { return; }
+            if (ZNet.instance != null && ZNet.instance.IsServer() == false) {
+                ReportLocalChoiceToServer();
+                return;
+            }
+            // Through the config manager so the header block at the top of the file survives the write.
             YamlConfigManager.WriteCurrentToDisk(YamlConfigManager.CharacterSettings);
         }
 
-        /// <summary>
-        /// Returns the configured default death choice key if it is set and matches a known
-        /// death level, otherwise null (meaning the selection popup should be used).
-        /// </summary>
+        private const string ChoiceReportRpc = Deathlink.PluginGUID + ".ChoiceReport";
+
+        private static void ReportLocalChoiceToServer()
+        {
+            if (Player.m_localPlayer == null) { return; }
+            ZRpc server = ZNet.instance.GetServerRPC();
+            if (server == null) { return; }
+            playerSettings.TryGetValue(Player.m_localPlayer.GetPlayerID(), out DeathConfiguration entry);
+            ZPackage package = new ZPackage();
+            package.Write(entry?.DeathChoiceLevel ?? "");
+            package.Write(entry?.ChangesUsed ?? 0);
+            server.Invoke(ChoiceReportRpc, package);
+        }
+
+        // Per-connection rather than routed, so the server identifies the reporter by its socket, not by
+        // anything the client wrote.
+        [HarmonyPatch(typeof(ZNet), "OnNewConnection")]
+        public static class RegisterChoiceReportRpc
+        {
+            public static void Postfix(ZNet __instance, ZNetPeer peer)
+            {
+                if (__instance.IsServer()) { peer.m_rpc.Register<ZPackage>(ChoiceReportRpc, OnServerReceiveChoice); }
+            }
+        }
+
+        private static void OnServerReceiveChoice(ZRpc rpc, ZPackage package)
+        {
+            if (ValConfig.UsePrivateKeysForDeathChoice.Value) { return; }
+            ZNetPeer peer = ZNet.instance.GetPeer(rpc);
+            if (peer == null) { return; }
+            string level = package.ReadString();
+            int changesUsed = package.ReadInt();
+            ZNet.instance.StartCoroutine(SaveReportedChoice(peer, level, changesUsed));
+        }
+
+        // A first choice is reported from Player.Load, before the game tells the server which character the
+        // connection plays (Game.SpawnPlayer sends the character id after loading), so wait for that.
+        private static IEnumerator SaveReportedChoice(ZNetPeer peer, string level, int changesUsed)
+        {
+            long playerID = 0L;
+            for (int attempt = 0; attempt < 60 && playerID == 0L; attempt++) {
+                if (ZNet.instance == null || !ZNet.instance.GetPeers().Contains(peer)) { yield break; }
+                playerID = Utils.PlayerIdOfPeer(peer);
+                if (playerID == 0L) { yield return new WaitForSeconds(0.5f); }
+            }
+            if (playerID == 0L) {
+                Logger.LogWarning($"Could not tell which character {peer.m_playerName} plays, so their death choice was not saved.");
+                yield break;
+            }
+            if (string.IsNullOrEmpty(level) && changesUsed == 0) {
+                playerSettings.Remove(playerID);
+            } else {
+                playerSettings[playerID] = new DeathConfiguration() { DeathChoiceLevel = level, ChangesUsed = changesUsed };
+            }
+            YamlConfigManager.WriteCurrentToDisk(YamlConfigManager.CharacterSettings);
+            Logger.LogDebug($"Saved the death choice of player {playerID}: '{level}', {changesUsed} changes used.");
+        }
+
+        // A client holds the server's CharacterSettings while connected; put its own file back on leaving.
+        [HarmonyPatch(typeof(Game), "Shutdown")]
+        public static class RestoreLocalCharacterSettings
+        {
+            public static void Postfix()
+            {
+                if (ZNet.instance == null || ZNet.instance.IsServer()) { return; }
+                YamlConfigManager.ReloadFromDisk(YamlConfigManager.CharacterSettings, broadcast: false);
+            }
+        }
+
         public static string GetValidDefaultChoiceKey()
         {
             string configured = ValConfig.DefaultDeathChoice.Value;
@@ -333,9 +360,6 @@ namespace Deathlink.Common
             return null;
         }
 
-        /// <summary>
-        /// How many times the player has already changed their death choice from the compendium.
-        /// </summary>
         public static int GetPlayerChangesUsed(Player player)
         {
             if (player == null) { return 0; }
@@ -350,15 +374,11 @@ namespace Deathlink.Common
             return 0;
         }
 
-        /// <summary>
-        /// Records that the player has used one of their allowed death choice changes.
-        /// </summary>
         public static void IncrementPlayerChangesUsed(Player player)
         {
             if (player == null) { return; }
             int used = GetPlayerChangesUsed(player) + 1;
             if (ValConfig.UsePrivateKeysForDeathChoice.Value) {
-                player.PlayerRemoveUniqueKey(DeathChoiceChangesKey);
                 player.AddUniqueKeyValue(DeathChoiceChangesKey, used.ToString());
             } else {
                 long playerID = player.GetPlayerID();
@@ -371,59 +391,45 @@ namespace Deathlink.Common
             }
         }
 
-        /// <summary>
-        /// True when the player still has at least one death choice change available.
-        /// </summary>
         public static bool PlayerCanChangeChoice(Player player)
         {
             if (player == null) { return false; }
             return GetPlayerChangesUsed(player) < ValConfig.AllowedDeathChoiceChanges.Value;
         }
 
-        // Apply hook for CharacterSettings.yaml. Additive on purpose: this file is save data that the
-        // server owns, and a client must not have entries it already knows about overwritten by a
-        // partial payload.
-        public static void MergePlayerSettings(Dictionary<long, DeathConfiguration> incoming) {
-            if (incoming == null) { return; }
-            foreach (var kvp in incoming) {
-                if (playerSettings.ContainsKey(kvp.Key)) { continue; }
-                playerSettings.Add(kvp.Key, kvp.Value);
-            }
+        // playerSettings becomes the file's own value, so writing the file saves exactly what is in memory.
+        public static void ApplyPlayerSettings(Dictionary<long, DeathConfiguration> incoming) {
+            playerSettings = incoming ?? new Dictionary<long, DeathConfiguration>();
         }
 
-        /// <summary>
-        /// One-shot migration for files written by 0.10.x or earlier.
-        ///
-        /// Those versions always wrote "skillInfluence: true" into every resource and skill modifier --
-        /// the field's initializer was true and it carried no [DefaultValue], so the serializer emitted
-        /// it whether or not anyone had asked for it. The field was also never read, so every one of
-        /// those bonuses actually applied in full. Now that skillInfluence works, leaving those values
-        /// in place would silently weaken every existing config, so they are cleared once on upgrade.
-        ///
-        /// The old misspelling "bonusModifer" is the marker: only a pre-0.11 file can contain it. The
-        /// rewrite that follows this migration emits the corrected spelling, which erases the marker --
-        /// so this runs exactly once, and an admin who deliberately turns skillInfluence on afterwards
-        /// keeps it.
-        /// </summary>
+        // 0.10.x and earlier wrote skillInfluence: true into every modifier but never read it, so those
+        // flags are cleared once on upgrade to keep the bonuses applying in full. Only such a file has the
+        // old "bonusModifer" spelling, and the rewrite that follows removes it.
         public static bool MigrateLegacySkillInfluence(Dictionary<string, DeathChoiceLevel> levels) {
-            if (levels == null || WrittenBeforeSkillInfluenceWorked(levels) == false) { return false; }
+            if (levels == null) { return false; }
+            List<DeathResourceModifier> resourceModifiers = levels.Values
+                .Where(level => level?.ResourceModifiers != null)
+                .SelectMany(level => level.ResourceModifiers.Values)
+                .Where(modifier => modifier != null).ToList();
+            List<DeathSkillModifier> skillModifiers = levels.Values
+                .Where(level => level?.SkillModifiers != null)
+                .SelectMany(level => level.SkillModifiers.Values)
+                .Where(modifier => modifier != null).ToList();
+            if (resourceModifiers.Any(modifier => modifier.ReadWithLegacySpelling) == false
+                && skillModifiers.Any(modifier => modifier.ReadWithLegacySpelling) == false) {
+                return false;
+            }
 
             int cleared = 0;
-            foreach (DeathChoiceLevel level in levels.Values) {
-                if (level == null) { continue; }
-                if (level.ResourceModifiers != null) {
-                    foreach (DeathResourceModifier modifier in level.ResourceModifiers.Values) {
-                        if (modifier == null || modifier.skillInfluence == false) { continue; }
-                        modifier.skillInfluence = false;
-                        cleared++;
-                    }
-                }
-                if (level.SkillModifiers == null) { continue; }
-                foreach (DeathSkillModifier modifier in level.SkillModifiers.Values) {
-                    if (modifier == null || modifier.skillInfluence == false) { continue; }
-                    modifier.skillInfluence = false;
-                    cleared++;
-                }
+            foreach (DeathResourceModifier modifier in resourceModifiers) {
+                if (modifier.skillInfluence == false) { continue; }
+                modifier.skillInfluence = false;
+                cleared++;
+            }
+            foreach (DeathSkillModifier modifier in skillModifiers) {
+                if (modifier.skillInfluence == false) { continue; }
+                modifier.skillInfluence = false;
+                cleared++;
             }
 
             if (cleared > 0) {
@@ -433,32 +439,11 @@ namespace Deathlink.Common
                     "you want to scale with Deathlink skill.");
             }
 
-            // True even when nothing was cleared, so the file is still rewritten in the current format.
-            // That is what removes the legacy spelling and stops this migration running again.
+            // True even when nothing was cleared, so the rewrite still removes the legacy spelling.
             return true;
         }
 
-        private static bool WrittenBeforeSkillInfluenceWorked(Dictionary<string, DeathChoiceLevel> levels) {
-            foreach (DeathChoiceLevel level in levels.Values) {
-                if (level == null) { continue; }
-                if (level.ResourceModifiers != null) {
-                    foreach (DeathResourceModifier modifier in level.ResourceModifiers.Values) {
-                        if (modifier != null && modifier.ReadWithLegacySpelling) { return true; }
-                    }
-                }
-                if (level.SkillModifiers == null) { continue; }
-                foreach (DeathSkillModifier modifier in level.SkillModifiers.Values) {
-                    if (modifier != null && modifier.ReadWithLegacySpelling) { return true; }
-                }
-            }
-            return false;
-        }
-
-        /// <summary>
-        /// Validate hook for DeathChoices.yaml. <paramref name="previous"/> is null on the first load and
-        /// the currently-live levels on every load after that, which is what lets this report levels that
-        /// were REMOVED -- the edit whose consequences an admin is least likely to predict.
-        /// </summary>
+        // previous is null on the first load and the live levels after that, which is how removed levels are reported.
         public static ValidationReport ValidateDeathLevels(Dictionary<string, DeathChoiceLevel> next, Dictionary<string, DeathChoiceLevel> previous) {
             ValidationReport report = new ValidationReport();
 
@@ -474,6 +459,11 @@ namespace Deathlink.Common
                     continue;
                 }
                 if (value.Fallback) { fallbacks++; }
+                if (level.Key.Any(char.IsWhiteSpace)) {
+                    // The game stores a character's choice as "key value" and splits it on the first space.
+                    report.Warn($"level '{level.Key}' has a space in its name, so a character cannot keep it as " +
+                        "their choice and will be asked to choose again. Rename it without spaces.");
+                }
                 if (value.DeathStyle == null) {
                     report.Error($"level '{level.Key}' has an empty DeathStyle block");
                     continue;
@@ -548,9 +538,6 @@ namespace Deathlink.Common
         private static void ValidateResourceModifiers(string levelKey, DeathChoiceLevel level, ValidationReport report) {
             if (level.ResourceModifiers == null) { return; }
 
-            // Which entry first claimed each prefab, so an overlap can name both sides. A prefab listed
-            // twice in one level is not fatal -- first entry wins -- but only one of the two bonuses will
-            // ever apply, which is almost never what was intended.
             Dictionary<string, string> claimedBy = new Dictionary<string, string>();
 
             foreach (KeyValuePair<string, DeathResourceModifier> entry in level.ResourceModifiers) {
@@ -583,10 +570,7 @@ namespace Deathlink.Common
             }
         }
 
-        // Silent until the prefab table exists. The startup load runs from Awake, long before ZNetScene
-        // and ObjectDB, so every name in the file would come back unresolved; EnsurePrefabsValidated
-        // re-runs this pass once the game can actually answer. See Utils.PrefabsAvailable for why the
-        // obvious `PrefabManager.Instance == null` test does not work.
+        // Silent until the prefab table exists; EnsurePrefabsValidated re-runs the pass once it does.
         private static void WarnIfUnknownPrefab(string levelKey, string where, string prefab, ValidationReport report) {
             if (Utils.PrefabsAvailable() == false) { return; }
             if (PrefabManager.Instance.GetPrefab(prefab) != null) { return; }
