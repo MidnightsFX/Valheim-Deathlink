@@ -27,7 +27,7 @@ namespace Deathlink
     {
         public const string PluginGUID = "MidnightsFX.Deathlink";
         public const string PluginName = "Deathlink";
-        public const string PluginVersion = "0.13.0";
+        public const string PluginVersion = "0.14.0";
 
         internal static AssetBundle EmbeddedResourceBundle;
         internal static bool RustyAlmanacClassesLoaded = false;
